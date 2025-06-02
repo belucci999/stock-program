@@ -1,0 +1,226 @@
+import os
+import time
+from datetime import datetime
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+import schedule
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Enable debug logging
+import logging
+logging.basicConfig(level=logging.INFO)
+
+# Constants
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+CREDENTIALS_FILE = 'credentials.json'
+SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
+BASE_URL = "https://finance.naver.com/sise/sise_market_sum.naver"
+
+def get_financial_ratios(stock_code):
+    """개별 종목의 PER, PBR, PSR 정보를 가져오는 함수"""
+    print(f"종목 코드 {stock_code}의 재무 정보 수집 중...")
+    url = f"https://finance.naver.com/item/main.naver?code={stock_code}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # PER, PBR, PSR 추출
+        ratios = {}
+        table = soup.select_one('table.tb_type1.tb_num')
+        if table:
+            rows = table.select('tr')
+            for row in rows:
+                th = row.select_one('th')
+                td = row.select_one('td')
+                if th and td:
+                    if 'PER' in th.text:
+                        ratios['PER'] = td.text.strip()
+                    elif 'PBR' in th.text:
+                        ratios['PBR'] = td.text.strip()
+                    elif 'PSR' in th.text:
+                        ratios['PSR'] = td.text.strip()
+        
+        return ratios
+    except Exception as e:
+        print(f"재무 정보 수집 중 오류 발생: {str(e)}")
+        return {'PER': 'N/A', 'PBR': 'N/A', 'PSR': 'N/A'}
+
+def get_previous_volume(stock_code):
+    """전일 거래량을 가져오는 함수"""
+    print(f"종목 코드 {stock_code}의 전일 거래량 확인 중...")
+    url = f"https://finance.naver.com/item/sise_day.naver?code={stock_code}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        volumes = soup.select('span.tah.p11')
+        if len(volumes) >= 2:
+            return int(volumes[1].text.replace(',', ''))
+    except Exception as e:
+        print(f"거래량 확인 중 오류 발생: {str(e)}")
+    return None
+
+def get_stock_data():
+    """네이버 금융에서 주식 정보를 크롤링하는 함수"""
+    print("네이버 금융 접속 시도...")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    all_data = []
+    filtered_data = []
+    markets = ['&sosok=0', '&sosok=1']  # 코스피(0)와 코스닥(1)
+    
+    for market in markets:
+        market_name = "코스피" if market == "&sosok=0" else "코스닥"
+        print(f"{market_name} 시장 데이터 수집 시작...")
+        page = 1
+        
+        while True:
+            url = f"{BASE_URL}?{market}&page={page}"
+            print(f"페이지 {page} 처리 중...")
+            response = requests.get(url, headers=headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            table = soup.select_one('table.type_2')
+            if not table:
+                print(f"{market_name} 마지막 페이지 도달")
+                break
+                
+            rows = table.select('tbody > tr')
+            
+            for row in rows:
+                cols = row.select('td')
+                if len(cols) <= 1:
+                    continue
+                    
+                try:
+                    stock_code = cols[1].select_one('a')['href'].split('=')[-1]
+                    stock_name = cols[1].select_one('a').text.strip()
+                    current_volume = int(cols[5].text.strip().replace(',', ''))
+                    price_change = float(cols[3].text.strip().replace(',', ''))
+                    
+                    print(f"종목 처리 중: {stock_name}")
+                    
+                    prev_volume = get_previous_volume(stock_code)
+                    if prev_volume:
+                        volume_change_pct = ((current_volume - prev_volume) / prev_volume) * 100
+                        
+                        stock_data = {
+                            '종목명': stock_name,
+                            '종목코드': stock_code,
+                            '현재가': cols[2].text.strip().replace(',', ''),
+                            '전일비': cols[3].text.strip().replace(',', ''),
+                            '등락률': cols[4].text.strip().replace('%', ''),
+                            '거래량': str(current_volume),
+                            '거래대금': cols[6].text.strip().replace(',', ''),
+                            '시가총액': cols[7].text.strip().replace(',', ''),
+                            '시장구분': market_name,
+                            '거래량전일대비': f"{volume_change_pct:.2f}"
+                        }
+                        
+                        all_data.append(stock_data)
+                        
+                        if volume_change_pct <= -85 and price_change < 0:
+                            print(f"조건 충족 종목 발견: {stock_name}")
+                            ratios = get_financial_ratios(stock_code)
+                            stock_data.update(ratios)
+                            filtered_data.append(stock_data)
+                            
+                except Exception as e:
+                    print(f"종목 처리 중 오류 발생: {str(e)}")
+                    continue
+            
+            page += 1
+            time.sleep(1)
+    
+    print(f"전체 {len(all_data)}개 종목 중 {len(filtered_data)}개 조건 충족")
+    return pd.DataFrame(all_data), pd.DataFrame(filtered_data)
+
+def update_google_sheets(df_all, df_filtered):
+    """Google Sheets API를 사용하여 데이터를 업데이트하는 함수"""
+    try:
+        print("Google Sheets 연결 시도...")
+        credentials = service_account.Credentials.from_service_account_file(
+            CREDENTIALS_FILE, scopes=SCOPES)
+        service = build('sheets', 'v4', credentials=credentials)
+        
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        all_sheet_name = f"{date_str}_전체"
+        filtered_sheet_name = f"{date_str}_거래량급감"
+        
+        print("새로운 시트 생성 중...")
+        body = {
+            'requests': [
+                {
+                    'addSheet': {
+                        'properties': {
+                            'title': all_sheet_name
+                        }
+                    }
+                },
+                {
+                    'addSheet': {
+                        'properties': {
+                            'title': filtered_sheet_name
+                        }
+                    }
+                }
+            ]
+        }
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID, body=body).execute()
+        
+        print("전체 데이터 시트 업데이트 중...")
+        values_all = [df_all.columns.tolist()] + df_all.values.tolist()
+        body_all = {
+            'values': values_all
+        }
+        service.spreadsheets().values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f'{all_sheet_name}!A1',
+            valueInputOption='RAW',
+            body=body_all
+        ).execute()
+        
+        print("필터링된 데이터 시트 업데이트 중...")
+        values_filtered = [df_filtered.columns.tolist()] + df_filtered.values.tolist()
+        body_filtered = {
+            'values': values_filtered
+        }
+        service.spreadsheets().values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f'{filtered_sheet_name}!A1',
+            valueInputOption='RAW',
+            body=body_filtered
+        ).execute()
+        
+        print(f"데이터가 성공적으로 업데이트되었습니다. (전체: {all_sheet_name}, 거래량급감: {filtered_sheet_name})")
+    except Exception as e:
+        print(f"Google Sheets 업데이트 중 오류 발생: {str(e)}")
+
+def main():
+    """메인 실행 함수"""
+    print("주식 데이터 크롤링 시작...")
+    df_all, df_filtered = get_stock_data()
+    print(f"총 {len(df_all)}개 종목 중 {len(df_filtered)}개 조건 충족")
+    update_google_sheets(df_all, df_filtered)
+
+if __name__ == "__main__":
+    print("프로그램 시작...")
+    print("데이터 수집을 시작합니다...")
+    main()  # 바로 실행
