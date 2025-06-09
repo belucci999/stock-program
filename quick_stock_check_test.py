@@ -21,7 +21,7 @@ def is_regular_stock(name):
     return True
 
 def get_individual_stock_data(code, name):
-    """개별 종목 페이지에서 PER, PBR, ROE, 시가총액 데이터 수집"""
+    """개별 종목 페이지에서 PER, PBR, ROE 데이터 수집"""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
     
     try:
@@ -32,9 +32,8 @@ def get_individual_stock_data(code, name):
         per = ''
         pbr = ''
         roe = ''
-        market_cap = ''  # 시가총액 추가
         
-        # 전체 텍스트에서 정규식으로 데이터 찾기
+        # 전체 텍스트에서 정규식으로 PER, PBR, ROE 찾기
         page_text = soup.get_text()
         
         # PER 추출 (PER 12.34배 형식)
@@ -52,13 +51,9 @@ def get_individual_stock_data(code, name):
         if roe_match:
             roe = roe_match.group(1)
         
-        # 시가총액 추출 (시가총액 1,234,567억 형식)
-        market_cap_match = re.search(r'시가총액[^\d]*?([,\d]+)억', page_text)
-        if market_cap_match:
-            market_cap = market_cap_match.group(1).replace(',', '')
-        
         # 더 구체적인 테이블 기반 추출 시도
-        if not per or not pbr or not roe or not market_cap:
+        if not per or not pbr or not roe:
+            # 모든 테이블 행 검사
             for table in soup.find_all('table'):
                 for row in table.find_all('tr'):
                     cells = row.find_all(['td', 'th'])
@@ -81,41 +76,25 @@ def get_individual_stock_data(code, name):
                                 roe_val = re.search(r'([+-]?\d+\.?\d*)', next_cell_text)
                                 if roe_val:
                                     roe = roe_val.group(1)
-                            
-                            if '시가총액' in cell_text and not market_cap:
-                                cap_val = re.search(r'([,\d]+)', next_cell_text.replace('억', ''))
-                                if cap_val:
-                                    market_cap = cap_val.group(1).replace(',', '')
         
-        return per, pbr, roe, market_cap
+        print(f"{name} - PER: {per}, PBR: {pbr}, ROE: {roe}%")
+        return per, pbr, roe
         
     except Exception as e:
         print(f"{name} 데이터 수집 오류: {str(e)}")
-        return '', '', '', ''
+        return '', '', ''
 
 def get_stock_data():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
     stock_data = []
     
+    # 테스트를 위해 일단 첫 2페이지만 수집
     for market_type in [0, 1]:
         market_name = "코스피" if market_type == 0 else "코스닥"
         print(f"\n{market_name} 데이터 수집 시작...")
         
-        # 전체 페이지 수 확인
-        url = f'https://finance.naver.com/sise/sise_market_sum.naver?sosok={market_type}&page=1'
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        max_page = 1
-        page_nav = soup.select('td.pgRR > a')
-        if page_nav:
-            max_page = int(page_nav[0]['href'].split('=')[-1])
-        
-        print(f"{market_name} 전체 페이지 수: {max_page}")
-        
-        # 전체 페이지 수집
-        for page in range(1, max_page + 1):
-            print(f"페이지 {page}/{max_page} 수집 중...")
+        for page in range(1, 3):  # 첫 2페이지만
+            print(f"페이지 {page} 수집 중...")
             url = f'https://finance.naver.com/sise/sise_market_sum.naver?sosok={market_type}&page={page}'
             response = requests.get(url, headers=headers)
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -143,9 +122,9 @@ def get_stock_data():
                     current_price = cols[2].text.strip().replace(',', '')
                     current_volume = cols[9].text.strip().replace(',', '') if len(cols) > 9 else ''
                     
-                    # 개별 종목 페이지에서 PER, PBR, ROE, 시가총액 데이터 수집
-                    time.sleep(0.3)  # 서버 부하 방지
-                    per, pbr, roe, market_cap = get_individual_stock_data(code, name)
+                    # 개별 종목 페이지에서 PER, PBR, ROE 데이터 수집
+                    time.sleep(0.5)  # 요청 간격 늘림
+                    per, pbr, roe = get_individual_stock_data(code, name)
                     
                     # 일별 시세 페이지에서 전일 데이터 가져오기
                     time.sleep(0.1)
@@ -177,61 +156,37 @@ def get_stock_data():
                             'PER': per,
                             'PBR': pbr,
                             'ROE': roe,
-                            '시가총액': market_cap,  # 시가총액 추가
                             '수집일자': datetime.now().strftime('%Y-%m-%d')
                         })
                         collected += 1
-                        
-                        # 진행상황 출력 (시가총액 포함)
-                        if collected % 10 == 0:
-                            print(f"  - {collected}개 종목 수집 완료 (최근: {name} - 시총: {market_cap}억)")
                 
                 except Exception as e:
                     print(f"오류 발생 - 종목: {name if 'name' in locals() else '알 수 없음'}, 오류: {str(e)}")
                     continue
             
             print(f"페이지 {page}에서 {collected}개 종목 수집 완료")
-            
-            # 중간 저장 (100페이지마다)
-            if page % 100 == 0:
-                temp_df = pd.DataFrame(stock_data)
-                temp_filename = f'temp_stock_data_{datetime.now().strftime("%Y%m%d_%H%M")}_{page}.xlsx'
-                temp_df.to_excel(temp_filename, index=False)
-                print(f"중간 저장: {temp_filename}")
+            if len(stock_data) >= 10:  # 테스트용으로 10개만 수집
+                break
+        
+        if len(stock_data) >= 10:
+            break
     
     return stock_data
 
 def main():
-    print("=== 전체 종목 데이터 수집 시작 (시가총액 포함) ===")
-    print("예상 소요시간: 2-3시간 (전체 종목 약 2000-3000개)")
-    print("주의: 수집 중 중단하지 마세요. 100페이지마다 중간 저장됩니다.\n")
-    
-    start_time = datetime.now()
+    print("=== 수집된 데이터 미리보기 ===")
     stock_data = get_stock_data()
-    end_time = datetime.now()
     
     if stock_data:
         df = pd.DataFrame(stock_data)
-        filename = f'full_stock_data_with_cap_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
+        filename = f'stock_data_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
         df.to_excel(filename, index=False)
+        print(f"\n수집 완료! 총 {len(stock_data)}개 종목의 데이터가 {filename}에 저장되었습니다.")
         
-        print(f"\n🎉 수집 완료!")
-        print(f"총 {len(stock_data)}개 종목의 데이터가 {filename}에 저장되었습니다.")
-        print(f"소요시간: {end_time - start_time}")
-        
-        # 데이터 품질 확인
-        print(f"\n📊 데이터 품질:")
-        print(f"PER 데이터 있는 종목: {df['PER'].notna().sum()}/{len(df)}")
-        print(f"PBR 데이터 있는 종목: {df['PBR'].notna().sum()}/{len(df)}")
-        print(f"ROE 데이터 있는 종목: {df['ROE'].notna().sum()}/{len(df)}")
-        print(f"시가총액 데이터 있는 종목: {df['시가총액'].notna().sum()}/{len(df)}")
-        
-        # 시가총액별 분포 확인
-        df['시가총액'] = pd.to_numeric(df['시가총액'], errors='coerce')
-        print(f"\n📈 시가총액 분포:")
-        print(f"10조 이상 대형주: {(df['시가총액'] >= 100000).sum()}개")
-        print(f"1조~10조 중형주: {((df['시가총액'] >= 10000) & (df['시가총액'] < 100000)).sum()}개")
-        print(f"1조 미만 소형주: {(df['시가총액'] < 10000).sum()}개")
+        # 데이터 미리보기
+        print("\n=== 수집된 데이터 요약 ===")
+        for _, row in df.iterrows():
+            print(f"{row['종목명']} - PER: {row['PER']}, PBR: {row['PBR']}, ROE: {row['ROE']}%")
     else:
         print("\n수집된 데이터가 없습니다.")
 
