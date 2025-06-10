@@ -30,6 +30,8 @@ source .venv/bin/activate  # macOS/Linux
 ```bash
 pip install -r requirements.txt
 ```
+### 4. 프로그램 실행
+python daily_auto_stock_analysis.py
 
 ### 4. Google Sheets API 설정
 
