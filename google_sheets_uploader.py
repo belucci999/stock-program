@@ -4,14 +4,121 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import os
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 class GoogleSheetsUploader:
-    def __init__(self, credentials_file='credentials.json'):
-        """구글 시트 업로더 초기화"""
-        self.credentials_file = credentials_file
-        self.gc = None
-        self.setup_connection()
+    def __init__(self):
+        self.SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+        self.CREDENTIALS_FILE = 'credentials.json'
+        self.SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
+        
+        # Google Sheets API 인증
+        self.credentials = service_account.Credentials.from_service_account_file(
+            self.CREDENTIALS_FILE, scopes=self.SCOPES)
+        self.service = build('sheets', 'v4', credentials=self.credentials)
     
+    def create_sheet(self, sheet_name):
+        """새로운 시트 생성"""
+        try:
+            body = {
+                'requests': [{
+                    'addSheet': {
+                        'properties': {
+                            'title': sheet_name
+                        }
+                    }
+                }]
+            }
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.SPREADSHEET_ID,
+                body=body
+            ).execute()
+            print(f"시트 생성 완료: {sheet_name}")
+            
+        except Exception as e:
+            if "already exists" not in str(e):
+                print(f"시트 생성 중 오류 발생: {str(e)}")
+    
+    def update_sheet(self, data, sheet_name, include_header=True):
+        """시트 데이터 업데이트"""
+        try:
+            if isinstance(data, list):
+                if not data:  # 빈 리스트 체크
+                    print(f"데이터가 없습니다: {sheet_name}")
+                    return
+                    
+                # 리스트를 데이터프레임으로 변환
+                df = pd.DataFrame(data)
+            else:
+                df = data
+            
+            # 데이터 준비
+            if include_header:
+                values = [df.columns.tolist()] + df.values.tolist()
+            else:
+                values = df.values.tolist()
+            
+            body = {
+                'values': values
+            }
+            
+            # 데이터 업데이트
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.SPREADSHEET_ID,
+                range=f'{sheet_name}!A1',
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            
+            print(f"데이터 업데이트 완료: {sheet_name}")
+            
+        except Exception as e:
+            print(f"데이터 업데이트 중 오류 발생: {str(e)}")
+    
+    def upload_rebound_signals(self, results):
+        """리바운드 신호 업로드"""
+        try:
+            # 현재 날짜로 시트 이름 생성
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            
+            # 전략별 시트 생성 및 업데이트
+            strategies = {
+                'volume_drop': '거래량급감',
+                'ma45': '45일선',
+                'ma360': '360일선'
+            }
+            
+            for key, name in strategies.items():
+                sheet_name = f"{date_str}_{name}"
+                self.create_sheet(sheet_name)
+                
+                if results[key]:
+                    df = pd.DataFrame(results[key])
+                    self.update_sheet(df, sheet_name)
+                else:
+                    print(f"신호 없음: {name}")
+            
+            # 통합 시트 업데이트
+            all_signals = []
+            for key in strategies.keys():
+                all_signals.extend(results[key])
+            
+            if all_signals:
+                sheet_name = f"{date_str}_전체"
+                self.create_sheet(sheet_name)
+                df_all = pd.DataFrame(all_signals)
+                self.update_sheet(df_all, sheet_name)
+            
+            print("리바운드 신호 업로드 완료")
+            
+        except Exception as e:
+            print(f"리바운드 신호 업로드 중 오류 발생: {str(e)}")
+
     def setup_connection(self):
         """구글 시트 연결 설정"""
         try:
@@ -20,11 +127,11 @@ class GoogleSheetsUploader:
                 'https://www.googleapis.com/auth/drive'
             ]
             
-            if not os.path.exists(self.credentials_file):
-                print(f"❌ {self.credentials_file} 파일이 없습니다.")
+            if not os.path.exists(self.CREDENTIALS_FILE):
+                print(f"❌ {self.CREDENTIALS_FILE} 파일이 없습니다.")
                 return False
             
-            creds = Credentials.from_service_account_file(self.credentials_file, scopes=scope)
+            creds = Credentials.from_service_account_file(self.CREDENTIALS_FILE, scopes=scope)
             self.gc = gspread.authorize(creds)
             print("✅ 구글 시트 연결 성공!")
             return True
