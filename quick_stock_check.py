@@ -237,7 +237,38 @@ def get_individual_stock_data(code, name):
                         if extracted and extracted != '-':
                             data['ROE'] = extracted + '%' if extracted else ''
                     elif '시가총액' in header:
-                        data['시가총액'] = value
+                        # 네이버 금융에서는 시가총액이 "코스피n위" 형식으로 나올 수 있음
+                        # 실제 시가총액 값을 추출하기 위해 별도 작업 필요
+                        try:
+                            # 시가총액 값 추출 시도 (현재가 * 상장주식수)
+                            stock_info_table = soup.select_one('div.first table.tb_type1')
+                            if stock_info_table:
+                                rows = stock_info_table.select('tr')
+                                for row in rows:
+                                    th = row.select_one('th')
+                                    if th and '시가총액' in th.text:
+                                        td = row.select_one('td')
+                                        if td:
+                                            cap_text = td.text.strip()
+                                            # 숫자만 추출 (억, 조 등 단위 제외)
+                                            import re
+                                            cap_match = re.search(r'([0-9,]+)억원|([0-9,]+)조\s*([0-9,]*)억원', cap_text)
+                                            if cap_match:
+                                                if cap_match.group(1):  # n억원 형식
+                                                    data['시가총액'] = cap_match.group(1).replace(',', '')
+                                                elif cap_match.group(2):  # n조 m억원 형식
+                                                    trillions = int(cap_match.group(2).replace(',', ''))
+                                                    billions = int(cap_match.group(3).replace(',', '') or '0')
+                                                    # 조 단위를 억 단위로 변환 (1조 = 10000억)
+                                                    total_billions = trillions * 10000 + billions
+                                                    data['시가총액'] = str(total_billions)
+                            else:
+                                # 기존 값 그대로 사용
+                                data['시가총액'] = value
+                        except Exception as e:
+                            print(f"  시가총액 추출 중 오류: {e}")
+                            # 기존 값 그대로 사용
+                            data['시가총액'] = value
                     elif '매출액' in header:
                         data['매출액'] = extract_financial_value(value)
                     elif '영업이익' in header:
