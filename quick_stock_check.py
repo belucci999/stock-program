@@ -166,7 +166,7 @@ def get_individual_stock_data(code, name):
             '부채비율': '', '유보율': '', '배당수익률': '', '배당금': '',
             '52주최고': '', '52주최저': '', '베타': '',
             '외국인비율': '', '기관비율': '', '거래대금': '', '거래량증감률': '',
-            '업종': '', '현재가': '', '전일종가': '', '거래량': ''
+            '업종': '', '현재가': '', '전일종가': '', '거래량': '', '전일거래량': ''
         }
         
         # 업종 정보 추출
@@ -194,20 +194,22 @@ def get_individual_stock_data(code, name):
             if volume:
                 data['거래량'] = volume.text.replace(',', '')
                 
+            # 전일 거래량 추출
+            prev_volume_elem = soup.select('table.no_info td')[2].select_one('span.blind')
+            if prev_volume_elem:
+                prev_volume = prev_volume_elem.text.replace(',', '')
+                data['전일거래량'] = prev_volume
+                
             # 거래량증감률 계산
-            if data['거래량'] and data['전일종가']:
-                # 이전 거래량 추출
-                prev_volume_elem = soup.select('table.no_info td')[2].select_one('span.blind')
-                if prev_volume_elem:
-                    prev_volume = prev_volume_elem.text.replace(',', '')
-                    try:
-                        curr_vol = int(data['거래량'])
-                        prev_vol = int(prev_volume)
-                        if prev_vol > 0:
-                            volume_change_pct = ((curr_vol - prev_vol) / prev_vol) * 100
-                            data['거래량증감률'] = f"{volume_change_pct:.2f}%"
-                    except:
-                        pass
+            if data['거래량'] and data['전일거래량']:
+                try:
+                    curr_vol = int(data['거래량'])
+                    prev_vol = int(data['전일거래량'])
+                    if prev_vol > 0:
+                        volume_change_pct = ((curr_vol - prev_vol) / prev_vol) * 100
+                        data['거래량증감률'] = f"{volume_change_pct:.2f}%"
+                except:
+                    pass
         except Exception as e:
             print(f"  가격/거래량 정보 추출 중 오류: {e}")
         
@@ -409,6 +411,7 @@ def get_stock_data():
             현재가 = stock_data.pop('현재가', '')
             전일종가 = stock_data.pop('전일종가', '')
             거래량 = stock_data.pop('거래량', '')
+            전일거래량 = stock_data.pop('전일거래량', '')
             거래량증감률 = stock_data.pop('거래량증감률', '')
             
             # 기본 정보와 상세 데이터 결합
@@ -420,6 +423,7 @@ def get_stock_data():
                 '현재가': 현재가,
                 '전일종가': 전일종가,
                 '거래량': 거래량,
+                '전일거래량': 전일거래량,
                 '거래량증감률': 거래량증감률,
                 **stock_data
             }
@@ -439,7 +443,7 @@ def get_stock_data():
                 
                 # 컬럼 순서 정리
                 column_order = [
-                    '종목명', '종목코드', '시장구분', '업종', '현재가', '전일종가', '거래량', '거래량증감률',
+                    '종목명', '종목코드', '시장구분', '업종', '현재가', '전일종가', '거래량', '전일거래량', '거래량증감률',
                     'PER', 'PBR', 'ROE', '시가총액', '거래대금',
                     '매출액', '영업이익', '당기순이익', '부채비율', '유보율',
                     '배당수익률', '배당금', '52주최고', '52주최저', '베타',
@@ -473,7 +477,7 @@ def get_stock_data():
     
     # 4. 컬럼 순서 정리
     column_order = [
-        '종목명', '종목코드', '시장구분', '업종', '현재가', '전일종가', '거래량', '거래량증감률',
+        '종목명', '종목코드', '시장구분', '업종', '현재가', '전일종가', '거래량', '전일거래량', '거래량증감률',
         'PER', 'PBR', 'ROE', '시가총액', '거래대금',
         '매출액', '영업이익', '당기순이익', '부채비율', '유보율',
         '배당수익률', '배당금', '52주최고', '52주최저', '베타',
