@@ -433,8 +433,8 @@ def get_stock_data():
                 net_income = stock_data.get('당기순이익', '')
                 print(f"  - {processed_count}개 종목 수집 완료 (최근: {stock['name']} - 영업이익: {profit}, 당기순이익: {net_income})")
             
-            # 10페이지(600개 종목)마다 임시 파일 저장
-            if processed_count % 600 == 0 and processed_count > 0:
+            # 5페이지(300개 종목)마다 임시 파일 저장
+            if processed_count % 300 == 0 and processed_count > 0:
                 temp_df = pd.DataFrame(detailed_data)
                 
                 # 컬럼 순서 정리
