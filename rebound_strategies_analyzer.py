@@ -94,7 +94,7 @@ class ReboundAnalyzer:
                 
                 # 조건 확인
                 surge_condition = volume_surge >= 500  # 500% 이상 폭증
-                drop_condition = volume_drop <= -75   # 75% 이상 급감 (전일의 25% 이하)
+                drop_condition = volume_drop <= -85   # 85% 이상 급감 (전일의 15% 이하)
                 down_candle = day0['close'] < day1['close']  # 음봉 발생
                 
                 # 추가 조건: 음봉의 크기가 5% 이상이면 신뢰도 상승
