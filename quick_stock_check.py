@@ -252,193 +252,564 @@ def calculate_volume_change_rate(current_volume, prev_volume):
         return ''
 
 def get_individual_stock_data(code, name):
-    """개별 종목 페이지에서 상세 재무 데이터 수집"""
+    """개별 종목 페이지에서 상세 재무 데이터 수집 (실제 페이지 구조 반영)"""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     
     try:
-        url = f'https://finance.naver.com/item/main.naver?code={code}'
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 메인 페이지에서 기본 정보 수집 (가장 많은 데이터가 있음)
+        main_url = f'https://finance.naver.com/item/main.naver?code={code}'
+        main_response = requests.get(main_url, headers=headers)
+        main_soup = BeautifulSoup(main_response.text, 'html.parser')
         
-        # 초기화 (18개 데이터 필드)
+        # 투자자별 매매동향 페이지에서 투자자 비율 수집
+        investor_url = f'https://finance.naver.com/item/frgn.naver?code={code}'
+        investor_response = requests.get(investor_url, headers=headers)
+        investor_soup = BeautifulSoup(investor_response.text, 'html.parser')
+        
+        # 재무정보 페이지에서 상세 재무 데이터 수집
+        finance_url = f'https://finance.naver.com/item/coinfo.naver?code={code}&target=finsum_more'
+        finance_response = requests.get(finance_url, headers=headers)
+        finance_soup = BeautifulSoup(finance_response.text, 'html.parser')
+        
+        # 초기화 (확장된 데이터 필드)
         data = {
             'PER': '', 'PBR': '', 'ROE': '', '시가총액': '',
             '매출액': '', '영업이익': '', '당기순이익': '', 
             '부채비율': '', '유보율': '', '배당수익률': '', '배당금': '',
             '52주최고': '', '52주최저': '', '거래대금': '',
-            '외국인비율': '', '기관비율': '', '베타': '', '업종': ''
+            '외국인비율': '', '기관비율': '', '베타': '', '업종': '',
+            '영업이익률': '', '순이익률': ''  # 추가 지표
         }
         
-        # 업종 정보 추출 (여러 방법 시도)
-        # 방법 1: 종목명 옆 링크에서
-        sector_link = soup.select_one('.wrap_company h2 a')
-        if sector_link and sector_link.get('title'):
-            data['업종'] = sector_link.get('title').strip()
+        # 1. 메인 페이지에서 기본 데이터 추출 (PER, PBR, ROE 최신 데이터 포함)
+        extract_main_page_data(main_soup, data)
         
-        # 방법 2: 기업개요 페이지에서
-        if not data['업종']:
-            try:
-                company_url = f'https://finance.naver.com/item/coinfo.naver?code={code}'
-                company_response = requests.get(company_url, headers=headers)
-                company_soup = BeautifulSoup(company_response.text, 'html.parser')
+        # 3. 투자자 페이지에서 투자자 비율 추출
+        extract_investor_data(investor_soup, data)
+        
+        # 4. 재무정보 페이지에서 재무 데이터 추출
+        extract_financial_data(finance_soup, data)
+        
+        # 5. 메인 페이지에서 추가 재무 정보 추출 (백업)
+        extract_additional_finance_data(main_soup, data)
+        
+        # 정확한 순서로 데이터 반환 (기존 코드와 일치)
+        return (
+            name,           # 0: 종목명  
+            '',            # 1: 현재가
+            '',            # 2: 전일 대비
+            data['PER'],   # 3: PER
+            data['PBR'],   # 4: PBR  
+            data['ROE'],   # 5: ROE
+            '',            # 6: 베타 (나중에 추가)
+            data['시가총액'], # 7: 시가총액
+            data['거래대금'], # 8: 거래대금
+            data['외국인비율'], # 9: 외국인비율
+            data['기관비율'],   # 10: 기관비율
+            '',              # 11: 거래량
+            data['배당수익률'], # 12: 배당수익률
+            data['배당금'],    # 13: 배당금
+            data['52주최고'],  # 14: 52주최고
+            data['매출액'],    # 15: 매출액
+            data['영업이익'],  # 16: 영업이익
+            data['당기순이익'] # 17: 당기순이익
+        )
+        
+    except Exception as e:
+        print(f"{name} 데이터 수집 오류: {str(e)}")
+        return ('',) * 18  # 18개 빈 값 반환
+
+def extract_investment_indicators(soup, data):
+    """종목정보 페이지의 투자지표 테이블에서 최신 데이터 추출 (가장 오른쪽 컬럼)"""
+    try:
+        tables = soup.find_all('table')
+        
+        for table in tables:
+            table_text = table.get_text()
+            
+            # 투자지표 테이블 찾기 (PER, PBR 등이 포함된)
+            if any(keyword in table_text for keyword in ['PER', 'PBR', '배당수익률']):
+                rows = table.find_all('tr')
                 
-                # 업종 테이블에서 추출
-                tables = company_soup.find_all('table')
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows:
-                        cells = row.find_all(['td', 'th'])
-                        for i, cell in enumerate(cells[:-1]):
-                            if '업종' in cell.get_text(strip=True) and i+1 < len(cells):
-                                data['업종'] = cells[i+1].get_text(strip=True)
-                                break
-                        if data['업종']:
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:  # 최소 2개 컬럼
+                        first_cell_text = cells[0].get_text(strip=True)
+                        
+                        # 가장 오른쪽 컬럼(최신 데이터)에서 값 추출
+                        latest_cell_text = cells[-1].get_text(strip=True)
+                        
+                        # PER 추출 (추정PER 제외하고 정확한 PER만)
+                        if 'PER' in first_cell_text and '추정' not in first_cell_text and not data['PER']:
+                            # "11.53배l5,162원" 형태에서 PER 값 추출
+                            per_match = re.search(r'([+-]?\d+\.?\d*)배', latest_cell_text)
+                            if per_match:
+                                per_value = float(per_match.group(1))
+                                if 0 < per_value < 1000:  # 합리적인 PER 범위
+                                    data['PER'] = per_match.group(1)
+                                    print(f"✅ PER 추출 성공: {data['PER']}")
+                        
+                        # PBR 추출  
+                        elif 'PBR' in first_cell_text and not data['PBR']:
+                            # "N/Al59,059원" 또는 "1.09배l..." 형태
+                            if 'N/A' not in latest_cell_text:
+                                pbr_match = re.search(r'([+-]?\d+\.?\d*)배?', latest_cell_text)
+                                if pbr_match:
+                                    pbr_value = float(pbr_match.group(1))
+                                    if 0 < pbr_value < 100:  # 합리적인 PBR 범위
+                                        data['PBR'] = pbr_match.group(1)
+                                        print(f"✅ PBR 추출 성공: {data['PBR']}")
+                        
+                        # 배당수익률 추출
+                        elif '배당수익률' in first_cell_text and not data['배당수익률']:
+                            # "2.43%" 형태
+                            dividend_match = re.search(r'([+-]?\d+\.?\d*)%', latest_cell_text)
+                            if dividend_match:
+                                data['배당수익률'] = dividend_match.group(1)
+    
+    except Exception as e:
+        print(f"투자지표 추출 오류: {str(e)}")
+
+def extract_latest_financial_ratios(soup, data):
+    """투자정보 테이블에서 최신 PER, PBR, ROE 추출 (2025.03 기준)"""
+    try:
+        tables = soup.find_all('table')
+        
+        for table in tables:
+            table_text = table.get_text()
+            
+            # 2025.03이 포함된 투자정보 테이블 찾기
+            if 'PER' in table_text and 'PBR' in table_text and '2025.03' in table_text:
+                rows = table.find_all('tr')
+                
+                # 헤더에서 최신 컬럼 위치 찾기 (2025.06 우선, 없으면 2025.03)
+                latest_col_index = -1
+                if len(rows) >= 2:
+                    header_cells = rows[1].find_all(['td', 'th'])  # 2번째 행이 년도 행
+                    
+                    # 1순위: 2025.06 찾기
+                    for i, cell in enumerate(header_cells):
+                        if '2025.06' in cell.get_text(strip=True):
+                            latest_col_index = i
+                            print(f"✅ 2025.06 컬럼 발견 (컬럼 {i})")
                             break
-                    if data['업종']:
-                        break
-            except:
-                pass
-        
-        # 거래대금과 시가총액 추출 (메인 페이지의 요약 정보에서)
-        today_data = soup.select('.today .blind')
-        for elem in today_data:
-            text = elem.get_text(strip=True)
-            # 거래대금 추출
-            if '거래대금' in text:
-                match = re.search(r'거래대금[^\d]*([,\d]+)', text)
-                if match:
-                    data['거래대금'] = match.group(1).replace(',', '')
-        
-        # 시가총액은 보통 요약 정보 테이블에 있음
-        summary_table = soup.select_one('table.no_info')
-        if summary_table:
-            for row in summary_table.find_all('tr'):
-                cells = row.find_all(['td', 'th'])
-                for i, cell in enumerate(cells[:-1]):
-                    cell_text = cell.get_text(strip=True)
-                    if '시가총액' in cell_text and i+1 < len(cells):
-                        next_text = cells[i+1].get_text(strip=True)
-                        # 시가총액에서 숫자만 추출 (억원 단위)
-                        match = re.search(r'([,\d]+)억?원?', next_text)
-                        if match:
-                            data['시가총액'] = match.group(1).replace(',', '')
-        
-        # 베타 정보는 투자정보 섹션에서 추출
-        invest_info = soup.select('.section.invest_info')
-        for section in invest_info:
-            text = section.get_text()
-            beta_match = re.search(r'베타[^\d]*([+-]?\d+\.?\d*)', text)
-            if beta_match:
-                data['베타'] = beta_match.group(1)
-                break
-        
-        # 추가: 전체 페이지 텍스트에서 정규식으로 누락된 데이터 보완
+                    
+                    # 2순위: 2025.06이 없으면 2025.03 찾기  
+                    if latest_col_index == -1:
+                        for i, cell in enumerate(header_cells):
+                            if '2025.03' in cell.get_text(strip=True):
+                                latest_col_index = i
+                                print(f"✅ 2025.03 컬럼 발견 (컬럼 {i})")
+                                break
+                
+                if latest_col_index == -1:
+                    continue
+                
+                # 각 행에서 PER, PBR, ROE 추출
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) > latest_col_index:
+                        first_cell_text = cells[0].get_text(strip=True)
+                        latest_value = cells[latest_col_index].get_text(strip=True)
+                        
+                        # PER 추출 (PER(배) 행)
+                        if 'PER' in first_cell_text and '배' in first_cell_text and not data['PER']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                try:
+                                    per_value = float(latest_value)
+                                    if 0 < per_value < 1000:
+                                        data['PER'] = latest_value
+                                        print(f"✅ 최신 PER 추출 (2025.03): {data['PER']}")
+                                except:
+                                    pass
+                        
+                        # PBR 추출 (PBR(배) 행)
+                        elif 'PBR' in first_cell_text and '배' in first_cell_text and not data['PBR']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                try:
+                                    pbr_value = float(latest_value)
+                                    if 0 < pbr_value < 100:
+                                        data['PBR'] = latest_value
+                                        print(f"✅ 최신 PBR 추출 (2025.03): {data['PBR']}")
+                                except:
+                                    pass
+                        
+                        # ROE 추출 (ROE(지배주주) 행)
+                        elif 'ROE' in first_cell_text and not data['ROE']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                try:
+                                    roe_value = float(latest_value)
+                                    if -100 <= roe_value <= 100:
+                                        data['ROE'] = latest_value
+                                        print(f"✅ 최신 ROE 추출 (2025.03): {data['ROE']}")
+                                except:
+                                    pass
+                        
+                        # 매출액 추출
+                        elif '매출액' in first_cell_text and not data['매출액']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                data['매출액'] = latest_value
+                                print(f"✅ 최신 매출액 추출 (2025.03): {data['매출액']}")
+                        
+                        # 영업이익 추출
+                        elif '영업이익' in first_cell_text and not data['영업이익']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                data['영업이익'] = latest_value
+                                print(f"✅ 최신 영업이익 추출 (2025.03): {data['영업이익']}")
+                        
+                        # 당기순이익 추출
+                        elif '당기순이익' in first_cell_text and not data['당기순이익']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                data['당기순이익'] = latest_value
+                                print(f"✅ 최신 당기순이익 추출 (2025.03): {data['당기순이익']}")
+                        
+                        # 영업이익률 추출
+                        elif '영업이익률' in first_cell_text and not data.get('영업이익률'):
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                data['영업이익률'] = latest_value
+                                print(f"✅ 최신 영업이익률 추출 (2025.03): {data['영업이익률']}")
+                        
+                        # 순이익률 추출 (추가 지표)
+                        elif '순이익률' in first_cell_text and not data.get('순이익률'):
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                data['순이익률'] = latest_value
+                                print(f"✅ 최신 순이익률 추출 (2025.03): {data['순이익률']}")
+                
+                break  # 테이블 찾았으면 종료
+    
+    except Exception as e:
+        print(f"최신 재무비율 추출 오류: {str(e)}")
+
+def extract_main_page_data(soup, data):
+    """메인 페이지에서 기본 데이터 추출"""
+    try:
+        # 전체 텍스트에서 정규식으로 데이터 추출
         page_text = soup.get_text()
         
-        # 더 포괄적인 패턴으로 재시도
-        if not data['거래대금']:
-            trading_match = re.search(r'거래대금[^\d]*([,\d]+)백만원?|거래대금[^\d]*([,\d]+)억원?', page_text)
-            if trading_match:
-                value = trading_match.group(1) or trading_match.group(2)
-                data['거래대금'] = value.replace(',', '') if value else ''
+        # 투자정보 테이블에서 최신 PER, PBR, ROE 추출 (2025.03 기준)
+        extract_latest_financial_ratios(soup, data)
         
-        if not data['시가총액']:
-            market_cap_match = re.search(r'시가총액[^\d]*([,\d]+)억원?', page_text)
-            if market_cap_match:
-                data['시가총액'] = market_cap_match.group(1).replace(',', '')
+        # 52주 최고/최저 (여러 패턴 시도)
+        # 패턴 1: "88,800l49,900" 형태
+        combined_52_match = re.search(r'52주최고l최저[^\d]*?([,\d]+)l([,\d]+)', page_text)
+        if combined_52_match:
+            data['52주최고'] = combined_52_match.group(1).replace(',', '')
+            data['52주최저'] = combined_52_match.group(2).replace(',', '')
+        else:
+            # 패턴 2: 별도로 찾기
+            high_52_match = re.search(r'52주최고[^\d]*?([,\d]+)', page_text)
+            if high_52_match:
+                data['52주최고'] = high_52_match.group(1).replace(',', '')
+            
+            # 패턴 3: "최고 88,800 최저 49,900" 같은 패턴
+            high_low_match = re.search(r'최고[^\d]*?([,\d]+)[^\d]*?최저[^\d]*?([,\d]+)', page_text)
+            if high_low_match:
+                if not data['52주최고']:
+                    data['52주최고'] = high_low_match.group(1).replace(',', '')
+                data['52주최저'] = high_low_match.group(2).replace(',', '')
+            
+            # 패턴 4: "l 49,900" 같은 단독 패턴 (최저값)
+            if not data['52주최저']:
+                low_only_match = re.search(r'l\s*([,\d]+)', page_text)
+                if low_only_match:
+                    low_value = low_only_match.group(1).replace(',', '')
+                    # 현재가보다 낮은 값만 최저로 인정
+                    if len(low_value) >= 4:  # 최소 4자리 이상
+                        data['52주최저'] = low_value
         
-        if not data['베타']:
-            beta_match = re.search(r'베타[^\d]*([+-]?\d+\.?\d*)', page_text)
-            if beta_match:
-                data['베타'] = beta_match.group(1)
+        # 시가총액 (억원 단위)
+        market_cap_match = re.search(r'시가총액[^\d]*?([,\d]+)조?[,\d]*억?원?', page_text)
+        if market_cap_match:
+            # 조 단위를 억 단위로 변환
+            cap_str = market_cap_match.group(1).replace(',', '')
+            if '조' in market_cap_match.group(0):
+                cap_value = int(cap_str) * 10000  # 조 -> 억 변환
+                data['시가총액'] = str(cap_value)
+            else:
+                data['시가총액'] = cap_str
         
-        # 기존 PER, PBR, ROE 등 기본 지표 추출
-        patterns = {
-            'PER': r'PER[^\d]*?([+-]?\d+\.?\d*)배',
-            'PBR': r'PBR[^\d]*?([+-]?\d+\.?\d*)배', 
-            'ROE': r'ROE[^\d]*?([+-]?\d+\.?\d*)%?',
-            '배당수익률': r'배당수익률[^\d]*?([+-]?\d+\.?\d*)%',
-            '52주최고': r'52주최고[^\d]*?([,\d]+)',
-            '52주최저': r'52주최저[^\d]*?([,\d]+)',
-            '외국인비율': r'외국인[^\d]*?([+-]?\d+\.?\d*)%',
-            '기관비율': r'기관[^\d]*?([+-]?\d+\.?\d*)%'
-        }
+        # 거래대금 (백만원)
+        trading_match = re.search(r'거래대금[^\d]*?([,\d]+)[^\d]*?백만', page_text)
+        if trading_match:
+            data['거래대금'] = trading_match.group(1).replace(',', '')
         
-        for key, pattern in patterns.items():
-            if not data[key]:  # 아직 값이 없는 경우만
-                match = re.search(pattern, page_text)
-                if match:
-                    data[key] = match.group(1).replace(',', '') if ',' in match.group(1) else match.group(1)
+        # 배당수익률 - 정확한 값 찾기 (2.43% 같은 형태)
+        if not data['배당수익률']:
+            # 먼저 "배당수익률" 문구 주변에서 찾기
+            dividend_section = re.search(r'배당수익률[^%]*?([+-]?\d+\.?\d*)%', page_text)
+            if dividend_section:
+                try:
+                    value = float(dividend_section.group(1))
+                    if 0 <= value <= 20:
+                        data['배당수익률'] = dividend_section.group(1)
+                        print(f"✅ 메인페이지 배당수익률 추출: {data['배당수익률']}%")
+                except:
+                    pass
+            
+            # 백업: 2.43% 같은 형태의 배당 수익률 패턴
+            if not data['배당수익률']:
+                all_percentages = re.findall(r'([+-]?\d+\.?\d*)%', page_text)
+                for pct in all_percentages:
+                    try:
+                        value = float(pct)
+                        if 1 <= value <= 10:  # 일반적인 배당수익률 범위
+                            # 해당 숫자 주변에 '배당' 관련 텍스트가 있는지 확인
+                            pattern = rf'배당[^%]*?{re.escape(pct)}%'
+                            if re.search(pattern, page_text):
+                                data['배당수익률'] = pct
+                                print(f"✅ 메인페이지 배당수익률 추출: {data['배당수익률']}%")
+                                break
+                    except:
+                        continue
         
-        # 테이블 기반 상세 추출 (기존 로직 유지하되 개선)
-        for table in soup.find_all('table'):
-            for row in table.find_all('tr'):
+        # 테이블에서 추가 정보 추출
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
                 cells = row.find_all(['td', 'th'])
                 if len(cells) >= 2:
                     for i, cell in enumerate(cells[:-1]):
                         cell_text = cell.get_text(strip=True)
                         next_cell_text = cells[i+1].get_text(strip=True)
                         
-                        # 재무 지표 매핑
-                        field_mapping = {
-                            'PER': ['PER', 'per'],
-                            'PBR': ['PBR', 'pbr'],
-                            'ROE': ['ROE', 'roe'],
-                            '시가총액': ['시가총액'],
-                            '매출액': ['매출액', '매출'],
-                            '영업이익': ['영업이익'],
-                            '당기순이익': ['당기순이익', '순이익'],
-                            '부채비율': ['부채비율'],
-                            '유보율': ['유보율'],
-                            '배당수익률': ['배당수익률', '배당률'],
-                            '배당금': ['배당금', '현금배당'],
-                            '52주최고': ['52주최고', '52주 최고'],
-                            '52주최저': ['52주최저', '52주 최저'],
-                            '거래대금': ['거래대금'],
-                            '외국인비율': ['외국인', '외국인 비율'],
-                            '기관비율': ['기관', '기관 비율'],
-                            '베타': ['베타', 'Beta']
-                        }
+                        # 베타 정보
+                        if '베타' in cell_text and not data['베타']:
+                            beta_match = re.search(r'([+-]?\d+\.?\d*)', next_cell_text)
+                            if beta_match:
+                                data['베타'] = beta_match.group(1)
                         
-                        for field, keywords in field_mapping.items():
-                            if any(keyword in cell_text for keyword in keywords) and not data[field]:
-                                # 숫자 추출
-                                if field in ['매출액', '영업이익', '당기순이익']:
-                                    # 억원 단위 처리
-                                    value_match = re.search(r'([,\d]+)억?원?', next_cell_text)
-                                    if value_match:
-                                        data[field] = value_match.group(1).replace(',', '')
-                                elif field in ['52주최고', '52주최저', '거래대금']:
-                                    # 일반 숫자 (쉼표 제거)
-                                    value_match = re.search(r'([,\d]+)', next_cell_text)
-                                    if value_match:
-                                        data[field] = value_match.group(1).replace(',', '')
-                                elif field in ['부채비율', '유보율', '배당수익률', '외국인비율', '기관비율']:
-                                    # 퍼센트 값
-                                    value_match = re.search(r'([+-]?\d+\.?\d*)%?', next_cell_text)
-                                    if value_match:
-                                        data[field] = value_match.group(1)
-                                elif field in ['PER', 'PBR', 'ROE', '베타']:
-                                    # 배수나 비율
-                                    value_match = re.search(r'([+-]?\d+\.?\d*)', next_cell_text)
-                                    if value_match:
-                                        data[field] = value_match.group(1)
-                                elif field == '시가총액':
-                                    # 시가총액 (억원)
-                                    value_match = re.search(r'([,\d]+)억?원?', next_cell_text)
-                                    if value_match:
-                                        data[field] = value_match.group(1).replace(',', '')
-                                elif field == '배당금':
-                                    # 배당금 (원)
-                                    value_match = re.search(r'([,\d]+)원?', next_cell_text)
-                                    if value_match:
-                                        data[field] = value_match.group(1).replace(',', '')
+                        # 업종 정보
+                        elif '업종' in cell_text and not data['업종']:
+                            # 숫자가 아닌 텍스트만 업종으로 인정
+                            sector_text = next_cell_text.strip()
+                            if sector_text and not re.match(r'^[\d.,]+', sector_text):
+                                data['업종'] = sector_text
         
-        return tuple(data.values())
-        
+        # 외국인 보유비율 (메인페이지에서도 가능한 경우)
+        foreign_match = re.search(r'외국인[^\d]*?([+-]?\d+\.?\d*)%', page_text)
+        if foreign_match and not data['외국인비율']:
+            data['외국인비율'] = foreign_match.group(1)
+    
     except Exception as e:
-        print(f"{name} 데이터 수집 오류: {str(e)}")
-        return ('',) * 18  # 18개 빈 값 반환
+        print(f"메인 페이지 데이터 추출 오류: {str(e)}")
+
+def extract_financial_data(soup, data):
+    """재무정보 페이지에서 재무 데이터 추출"""
+    try:
+        # 재무제표 테이블에서 최신 연도 데이터 추출
+        tables = soup.find_all('table')
+        for table in tables:
+            table_text = table.get_text()
+            
+            # 재무제표 테이블 찾기
+            if '매출액' in table_text or '영업이익' in table_text:
+                rows = table.find_all('tr')
+                if len(rows) > 1:
+                    # 헤더에서 최신 연도 컬럼 찾기 (2024년 우선)
+                    header_row = rows[0]
+                    year_cells = header_row.find_all(['th', 'td'])
+                    latest_col_index = 1  # 기본값
+                    
+                    for i, cell in enumerate(year_cells[1:], 1):
+                        cell_text = cell.get_text(strip=True)
+                        if '2024' in cell_text or '24/12' in cell_text:
+                            latest_col_index = i
+                            break
+                        elif '2023' in cell_text or '23/12' in cell_text and latest_col_index == 1:
+                            latest_col_index = i
+                    
+                    # 각 재무 항목 추출
+                    for row in rows[1:]:
+                        cells = row.find_all(['td', 'th'])
+                        if len(cells) > latest_col_index:
+                            item_name = cells[0].get_text(strip=True)
+                            latest_value = cells[latest_col_index].get_text(strip=True)
+                            
+                            # 매출액
+                            if '매출액' in item_name and not data['매출액']:
+                                value_match = re.search(r'([,\d]+)', latest_value.replace(',', ''))
+                                if value_match:
+                                    data['매출액'] = value_match.group(1)
+                            
+                            # 영업이익
+                            elif '영업이익' in item_name and not data['영업이익']:
+                                value_match = re.search(r'([+-]?[,\d]+)', latest_value.replace(',', ''))
+                                if value_match:
+                                    data['영업이익'] = value_match.group(1)
+                            
+                            # 당기순이익
+                            elif ('당기순이익' in item_name or '순이익' in item_name) and not data['당기순이익']:
+                                value_match = re.search(r'([+-]?[,\d]+)', latest_value.replace(',', ''))
+                                if value_match:
+                                    data['당기순이익'] = value_match.group(1)
+                            
+                            # ROE
+                            elif 'ROE' in item_name and not data['ROE']:
+                                value_match = re.search(r'([+-]?\d+\.?\d*)', latest_value)
+                                if value_match:
+                                    data['ROE'] = value_match.group(1)
+                            
+                            # 부채비율
+                            elif '부채비율' in item_name and not data['부채비율']:
+                                value_match = re.search(r'([+-]?\d+\.?\d*)', latest_value)
+                                if value_match:
+                                    data['부채비율'] = value_match.group(1)
+                            
+                            # 유보율
+                            elif '유보율' in item_name and not data['유보율']:
+                                value_match = re.search(r'([+-]?\d+\.?\d*)', latest_value)
+                                if value_match:
+                                    data['유보율'] = value_match.group(1)
+                            
+                            # 배당금
+                            elif '배당금' in item_name and not data['배당금']:
+                                value_match = re.search(r'([,\d]+)', latest_value.replace(',', ''))
+                                if value_match:
+                                    data['배당금'] = value_match.group(1)
+    
+    except Exception as e:
+        print(f"재무 데이터 추출 오류: {str(e)}")
+
+def extract_investor_data(soup, data):
+    """투자자별 매매동향 페이지에서 투자자 비율 및 거래 데이터 추출"""
+    try:
+        # 전체 텍스트에서 외국인/기관 비율 추출
+        page_text = soup.get_text()
+        
+        # 외국인 소진율 또는 보유율
+        foreign_patterns = [
+            r'외국인소진율[^\d]*?([+-]?\d+\.?\d*)%',
+            r'외국인보유율[^\d]*?([+-]?\d+\.?\d*)%',
+            r'외국인[^\d]*?([+-]?\d+\.?\d*)%'
+        ]
+        
+        for pattern in foreign_patterns:
+            foreign_match = re.search(pattern, page_text)
+            if foreign_match and not data['외국인비율']:
+                data['외국인비율'] = foreign_match.group(1)
+                break
+        
+        # 테이블에서 정확한 투자자 비율 찾기
+        tables = soup.find_all('table')
+        for table in tables:
+            if '외국인' in table.get_text():
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:
+                        for i, cell in enumerate(cells[:-1]):
+                            cell_text = cell.get_text(strip=True)
+                            next_cell_text = cells[i+1].get_text(strip=True)
+                            
+                            # 외국인 비율
+                            if '외국인' in cell_text and '%' in next_cell_text and not data['외국인비율']:
+                                value_match = re.search(r'([+-]?\d+\.?\d*)', next_cell_text)
+                                if value_match:
+                                    data['외국인비율'] = value_match.group(1)
+                            
+                            # 기관 비율
+                            elif '기관' in cell_text and '%' in next_cell_text and not data['기관비율']:
+                                value_match = re.search(r'([+-]?\d+\.?\d*)', next_cell_text)
+                                if value_match:
+                                    data['기관비율'] = value_match.group(1)
+    
+    except Exception as e:
+        print(f"투자자 데이터 추출 오류: {str(e)}")
+
+def extract_price_data(soup, data):
+    """메인 페이지에서 기본 시세 데이터 추출"""
+    try:
+        # 52주 최고/최저, 시가총액, 베타 등 추출
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 2:
+                    for i, cell in enumerate(cells[:-1]):
+                        cell_text = cell.get_text(strip=True)
+                        next_cell_text = cells[i+1].get_text(strip=True)
+                        
+                        # 52주 최고
+                        if '52주최고' in cell_text and not data['52주최고']:
+                            value_match = re.search(r'([,\d]+)', next_cell_text)
+                            if value_match:
+                                data['52주최고'] = value_match.group(1).replace(',', '')
+                        
+                        # 52주 최저
+                        elif '52주최저' in cell_text and not data['52주최저']:
+                            value_match = re.search(r'([,\d]+)', next_cell_text)
+                            if value_match:
+                                data['52주최저'] = value_match.group(1).replace(',', '')
+                        
+                        # 시가총액
+                        elif '시가총액' in cell_text and not data['시가총액']:
+                            value_match = re.search(r'([,\d]+)', next_cell_text)
+                            if value_match:
+                                data['시가총액'] = value_match.group(1).replace(',', '')
+                        
+                        # 베타
+                        elif '베타' in cell_text and not data['베타']:
+                            value_match = re.search(r'([+-]?\d+\.?\d*)', next_cell_text)
+                            if value_match:
+                                data['베타'] = value_match.group(1)
+        
+        # 거래대금 정보 (아직 없다면)
+        if not data['거래대금']:
+            page_text = soup.get_text()
+            trading_match = re.search(r'거래대금[^\d]*([,\d]+)', page_text)
+            if trading_match:
+                data['거래대금'] = trading_match.group(1).replace(',', '')
+    
+    except Exception as e:
+        print(f"시세 데이터 추출 오류: {str(e)}")
+
+def extract_additional_finance_data(soup, data):
+    """메인 페이지에서 추가 재무 정보 추출 (백업용)"""
+    try:
+        page_text = soup.get_text()
+        
+        # ROE 패턴 찾기
+        if not data['ROE']:
+            roe_patterns = [
+                r'ROE[^\d]*?([+-]?\d+\.?\d*)%?',
+                r'자기자본이익률[^\d]*?([+-]?\d+\.?\d*)%?'
+            ]
+            for pattern in roe_patterns:
+                roe_match = re.search(pattern, page_text)
+                if roe_match:
+                    value = float(roe_match.group(1))
+                    if -100 <= value <= 100:  # 합리적인 ROE 범위
+                        data['ROE'] = roe_match.group(1)
+                        break
+        
+        # 베타 정보 재시도
+        if not data['베타']:
+            # 테이블에서 베타 찾기
+            tables = soup.find_all('table')
+            for table in tables:
+                if '베타' in table.get_text():
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cells = row.find_all(['td', 'th'])
+                        for i, cell in enumerate(cells[:-1]):
+                            if '베타' in cell.get_text() and i+1 < len(cells):
+                                beta_text = cells[i+1].get_text(strip=True)
+                                beta_match = re.search(r'([+-]?\d+\.?\d*)', beta_text)
+                                if beta_match:
+                                    data['베타'] = beta_match.group(1)
+                                    break
+        
+        # 시가총액 정정 (조 단위 변환 재확인)
+        if data['시가총액']:
+            # 현재 값이 조 단위인지 확인하고 변환
+            cap_value = data['시가총액'].replace(',', '')
+            if len(cap_value) <= 4:  # 조 단위로 추정
+                data['시가총액'] = str(int(cap_value) * 10000)
+    
+    except Exception as e:
+        print(f"추가 재무 데이터 추출 오류: {str(e)}")
 
 def get_stock_data():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
@@ -565,12 +936,12 @@ def get_stock_data():
             
             print(f"페이지 {page}에서 {collected}개 종목 수집 완료")
             
-            # 중간 저장 (100페이지마다)
-            if page % 100 == 0:
+            # 중간 저장 (5페이지마다, 로컬에만)
+            if page % 5 == 0:
                 temp_df = pd.DataFrame(stock_data)
                 temp_filename = f'temp_stock_data_{datetime.now().strftime("%Y%m%d_%H%M")}_{page}.xlsx'
                 temp_df.to_excel(temp_filename, index=False)
-                print(f"중간 저장: {temp_filename}")
+                print(f"중간 저장 (로컬): {temp_filename}")
     
     return stock_data
 
@@ -578,7 +949,7 @@ def main():
     print("=== 전체 종목 상세 데이터 수집 시작 ===")
     print("수집 데이터: 26개 필드 (재무지표, 투자자정보, 배당정보, 거래량증감율 등)")
     print("예상 소요시간: 3-4시간 (전체 종목 약 2000-3000개)")
-    print("주의: 수집 중 중단하지 마세요. 100페이지마다 중간 저장됩니다.\n")
+    print("주의: 수집 중 중단하지 마세요. 5페이지마다 로컬에 중간 저장됩니다.\n")
     
     start_time = datetime.now()
     stock_data = get_stock_data()

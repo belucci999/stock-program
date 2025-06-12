@@ -45,6 +45,8 @@ def save_to_excel(results):
     except Exception as e:
         print(f"❌ 엑셀 파일 저장 중 오류 발생: {str(e)}")
 
+
+
 def main():
     print(f"🚀 일일 리바운드 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
     
@@ -56,8 +58,8 @@ def main():
         # 리바운드 분석
         print("2. 리바운드 신호 분석 중...")
         analyzer = ReboundAnalyzer()
-        for code, data in stock_data.items():
-            if is_regular_stock(data['name']):  # 일반 주식만 분석
+        for data in stock_data:
+            if is_regular_stock(data['종목명']):  # 일반 주식만 분석
                 analyzer.analyze_stock(data)
         results = analyzer.get_results()
         
