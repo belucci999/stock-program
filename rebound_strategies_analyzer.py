@@ -305,32 +305,116 @@ class ReboundAnalyzer:
     def analyze_stock(self, stock_data):
         """개별 종목에 대한 리바운드 전략 분석"""
         try:
+            # 필수 키 확인
+            if 'code' not in stock_data:
+                print(f"코드 없음: {stock_data}")
+                return
+                
             code = stock_data['code']
-            name = stock_data['name']
+            name = stock_data.get('name', f'Unknown_{code}')  # name이 없으면 기본값 사용
             
             # 과거 데이터 조회
             historical_data = self.get_historical_data(code)
             if historical_data is None or historical_data.empty:
                 return
             
+            # stock_data에 name 키가 없을 경우 추가
+            if 'name' not in stock_data:
+                stock_data['name'] = name
+            
             # 1. 거래량 급감 전략 분석
-            volume_drop_result = self.analyze_volume_drop(stock_data)
-            if volume_drop_result:
-                self.results['volume_drop'].append(volume_drop_result)
+            try:
+                volume_drop_result = self.analyze_volume_drop(stock_data)
+                if volume_drop_result:
+                    self.results['volume_drop'].append(volume_drop_result)
+            except Exception as e:
+                print(f"거래량 급감 분석 오류 ({code}, {name}): {str(e)}")
             
             # 2. 45일선 전략 분석
-            ma45_result = self.analyze_ma45(historical_data, stock_data)
-            if ma45_result:
-                self.results['ma45'].append(ma45_result)
+            try:
+                ma45_result = self.analyze_ma45(historical_data, stock_data)
+                if ma45_result:
+                    self.results['ma45'].append(ma45_result)
+            except Exception as e:
+                print(f"45일선 분석 오류 ({code}, {name}): {str(e)}")
             
             # 3. 360일선 전략 분석
-            ma360_result = self.analyze_ma360(historical_data, stock_data)
-            if ma360_result:
-                self.results['ma360'].append(ma360_result)
+            try:
+                ma360_result = self.analyze_ma360(historical_data, stock_data)
+                if ma360_result:
+                    self.results['ma360'].append(ma360_result)
+            except Exception as e:
+                print(f"360일선 분석 오류 ({code}, {name}): {str(e)}")
                     
         except Exception as e:
-            print(f"종목 분석 중 오류 발생 ({stock_data.get('name', 'Unknown')}): {str(e)}")
+            print(f"종목 분석 중 오류 발생 ({stock_data.get('code', 'Unknown')}, {stock_data.get('name', 'Unknown')}): {str(e)}")
 
     def get_results(self):
         """분석 결과 반환"""
         return self.results 
+
+# 직접 실행 코드 추가
+if __name__ == "__main__":
+    import sys
+    from datetime import datetime
+    
+    print(f"🚀 리바운드 전략 분석기 테스트 실행 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+    print("📌 분석 전략: 거래량 급감, 45일선(세력선), 360일선(최후의 수비선)")
+    print("=" * 70)
+    
+    # 기본 테스트용 종목 코드 (삼성전자)
+    test_code = "005930"
+    if len(sys.argv) > 1:
+        test_code = sys.argv[1]
+    
+    # 테스트 데이터 생성
+    test_data = {
+        'code': test_code,
+        'name': '테스트종목',
+        'current_price': 50000,
+        'prev_price': 51000,
+        'current_volume': 1000000,
+        'prev_volume': 10000000
+    }
+    
+    # 분석기 초기화 및 분석 실행
+    analyzer = ReboundAnalyzer()
+    
+    # 과거 데이터 가져오기
+    print(f"📊 과거 데이터 가져오는 중... ({test_code})")
+    historical_data = analyzer.get_historical_data(test_code)
+    
+    if historical_data is not None and not historical_data.empty:
+        print(f"✅ {len(historical_data)}일치 데이터 수집 완료")
+        
+        # 각 전략 분석
+        print("\n📈 거래량 급감 전략 분석...")
+        volume_drop_result = analyzer.analyze_volume_drop(test_data)
+        if volume_drop_result:
+            print("  ✅ 거래량 급감 신호 발견!")
+            for k, v in volume_drop_result.items():
+                print(f"  - {k}: {v}")
+        else:
+            print("  ❌ 거래량 급감 신호 없음")
+        
+        print("\n📈 45일선 전략 분석...")
+        ma45_result = analyzer.analyze_ma45(historical_data, test_data)
+        if ma45_result:
+            print("  ✅ 45일선 신호 발견!")
+            for k, v in ma45_result.items():
+                print(f"  - {k}: {v}")
+        else:
+            print("  ❌ 45일선 신호 없음")
+        
+        print("\n📈 360일선 전략 분석...")
+        ma360_result = analyzer.analyze_ma360(historical_data, test_data)
+        if ma360_result:
+            print("  ✅ 360일선 신호 발견!")
+            for k, v in ma360_result.items():
+                print(f"  - {k}: {v}")
+        else:
+            print("  ❌ 360일선 신호 없음")
+    else:
+        print(f"❌ 과거 데이터를 가져올 수 없습니다: {test_code}")
+    
+    print("\n🏁 테스트 완료")

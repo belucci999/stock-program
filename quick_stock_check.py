@@ -150,6 +150,122 @@ def get_stock_list():
     
     return all_stocks
 
+def get_stock_volumes(code):
+    """여러 방법을 사용하여 거래량 정보 추출"""
+    # 방법 1: 외국인 거래 페이지에서 추출
+    frgn_volumes = get_frgn_volumes(code)
+    if frgn_volumes and frgn_volumes.get('current_volume') and frgn_volumes.get('prev_volume'):
+        return frgn_volumes
+    
+    # 방법 2: 일별 시세 페이지에서 추출
+    daily_volumes = get_daily_volumes(code)
+    if daily_volumes and daily_volumes.get('current_volume') and daily_volumes.get('prev_volume'):
+        return {
+            'current_volume': daily_volumes['current_volume'],
+            'prev_volume': daily_volumes['prev_volume']
+        }
+    
+    # 방법 3: 메인 페이지에서 추출한 현재 거래량 + 일별 시세 페이지에서 추출한 전일 거래량
+    if frgn_volumes and frgn_volumes.get('current_volume') and daily_volumes and daily_volumes.get('prev_volume'):
+        return {
+            'current_volume': frgn_volumes['current_volume'],
+            'prev_volume': daily_volumes['prev_volume']
+        }
+    
+    # 모든 방법이 실패한 경우 None 반환
+    return None
+
+def get_frgn_volumes(code):
+    """네이버 금융 외국인 거래 페이지에서 거래량 정보 추출"""
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    
+    try:
+        # 외국인 거래 페이지 URL
+        url = f'https://finance.naver.com/item/frgn.naver?code={code}'
+        response = requests.get(url, headers=headers)
+        
+        # EUC-KR 인코딩 처리
+        response.encoding = 'euc-kr'  
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 거래량 데이터가 있는 테이블 찾기 (4번째 테이블, 인덱스 3)
+        tables = soup.select('table')
+        if len(tables) < 4:
+            return None
+        
+        volume_table = tables[3]  # 4번째 테이블 (인덱스 3)
+        
+        # 데이터 행 찾기
+        rows = volume_table.select('tr:not(:first-child)')  # 헤더 행 제외
+        
+        # 빈 행이나 데이터가 없는 행 필터링
+        data_rows = []
+        for row in rows:
+            cells = row.select('td')
+            if len(cells) > 4:  # 최소 5개의 셀이 있어야 유효한 데이터 행
+                # 첫 번째 셀(날짜)이 비어있지 않은지 확인
+                date_text = cells[0].text.strip()
+                if date_text and re.match(r'\d{4}\.\d{2}\.\d{2}', date_text):
+                    data_rows.append(cells)
+        
+        # 충분한 데이터 행이 있는지 확인
+        if len(data_rows) < 2:
+            return None
+        
+        # 오늘과 전일 거래량 데이터 추출
+        if len(data_rows) >= 2:
+            current_volume = data_rows[0][4].text.strip().replace(',', '')
+            prev_volume = data_rows[1][4].text.strip().replace(',', '')
+            
+            return {
+                'current_volume': current_volume,
+                'prev_volume': prev_volume
+            }
+        
+        return None
+        
+    except Exception as e:
+        print(f"  외국인 거래 페이지 추출 오류: {str(e)}")
+        return None
+
+def get_daily_volumes(code):
+    """네이버 금융 일별 시세 페이지에서 거래량 정보 추출"""
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    
+    try:
+        # 일별 시세 페이지 URL
+        url = f'https://finance.naver.com/item/sise_day.naver?code={code}'
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 데이터 행 찾기
+        rows = soup.select('table.type2 tr[onmouseover]')
+        
+        if len(rows) < 2:
+            return None
+        
+        # 첫 번째와 두 번째 행에서 거래량 추출
+        volumes = []
+        for i, row in enumerate(rows[:2]):
+            cells = row.select('td')
+            if len(cells) >= 6:
+                date = cells[0].text.strip()
+                volume = cells[5].text.strip().replace(',', '')
+                volumes.append({'date': date, 'volume': volume})
+        
+        if len(volumes) >= 2:
+            return {
+                'current_volume': volumes[0]['volume'],
+                'prev_volume': volumes[1]['volume']
+            }
+        
+        return None
+        
+    except Exception as e:
+        print(f"  일별 시세 페이지 추출 오류: {str(e)}")
+        return None
+
 def get_individual_stock_data(code, name):
     """개별 종목 페이지에서 상세 재무 데이터 수집 - 마이너스 값 처리 개선"""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -177,7 +293,7 @@ def get_individual_stock_data(code, name):
         except Exception as e:
             print(f"  업종 정보 추출 중 오류: {e}")
             
-        # 현재가, 전일종가, 거래량 추출
+        # 현재가, 전일종가 추출
         try:
             # 현재가
             current_price = soup.select_one('div.rate_info div.today span.blind')
@@ -188,31 +304,58 @@ def get_individual_stock_data(code, name):
             prev_price = soup.select_one('table.no_info td.first span.blind')
             if prev_price:
                 data['전일종가'] = prev_price.text.replace(',', '')
+        except Exception as e:
+            print(f"  가격 정보 추출 중 오류: {e}")
+            
+        # 거래량과 전일거래량 - 외국인 거래 페이지에서 추출 (개선된 방법)
+        try:
+            volumes = get_stock_volumes(code)
+            if volumes:
+                data['거래량'] = volumes['current_volume']
+                data['전일거래량'] = volumes['prev_volume']
                 
-            # 거래량
-            volume = soup.select_one('div.rate_info table.no_info td span.blind')
-            if volume:
-                data['거래량'] = volume.text.replace(',', '')
-                
-            # 전일 거래량 추출
-            prev_volume_elem = soup.select('table.no_info td')[2].select_one('span.blind')
-            if prev_volume_elem:
-                prev_volume = prev_volume_elem.text.replace(',', '')
-                data['전일거래량'] = prev_volume
-                
-            # 거래량증감률 계산
-            if data['거래량'] and data['전일거래량']:
+                # 거래량증감률 계산
                 try:
-                    curr_vol = int(data['거래량'])
-                    prev_vol = int(data['전일거래량'])
+                    curr_vol = int(volumes['current_volume'])
+                    prev_vol = int(volumes['prev_volume'])
                     if prev_vol > 0:
                         volume_change_pct = ((curr_vol - prev_vol) / prev_vol) * 100
                         data['거래량증감률'] = f"{volume_change_pct:.2f}%"
-                except:
-                    pass
+                except Exception as e:
+                    print(f"  거래량증감률 계산 오류: {e}")
+            else:
+                # 백업 방법: 기존 방식으로 시도 (인덱스 오류 방지 코드 추가)
+                try:
+                    # 모든 td 요소 가져오기
+                    td_elements = soup.select('table.no_info td')
+                    
+                    # 안전하게 인덱스 접근
+                    if len(td_elements) > 2:
+                        volume_elem = td_elements[2].select_one('span.blind')
+                        if volume_elem:
+                            data['거래량'] = volume_elem.text.replace(',', '')
+                    
+                    # 전일 거래량 추출 (기존 방식)
+                    if len(td_elements) > 10:
+                        prev_volume_elem = td_elements[10].select_one('span.blind')
+                        if prev_volume_elem:
+                            data['전일거래량'] = prev_volume_elem.text.replace(',', '')
+                    
+                    # 거래량증감률 계산
+                    if data['거래량'] and data['전일거래량']:
+                        try:
+                            curr_vol = int(data['거래량'])
+                            prev_vol = int(data['전일거래량'])
+                            if prev_vol > 0:
+                                volume_change_pct = ((curr_vol - prev_vol) / prev_vol) * 100
+                                data['거래량증감률'] = f"{volume_change_pct:.2f}%"
+                        except Exception as e:
+                            print(f"  백업 거래량증감률 계산 오류: {e}")
+                except Exception as e:
+                    print(f"  거래량 백업 추출 실패: {code}, {e}")
         except Exception as e:
-            print(f"  가격/거래량 정보 추출 중 오류: {e}")
-        
+            print(f"  거래량 정보 추출 중 오류: {e}")
+            
         # 재무 데이터 추출 - 마이너스 값 처리 개선
         invest_tables = soup.select('table')
         for table in invest_tables:
@@ -237,42 +380,61 @@ def get_individual_stock_data(code, name):
                         if extracted and extracted != '-':
                             data['ROE'] = extracted + '%' if extracted else ''
                     elif '시가총액' in header:
-                        # 네이버 금융에서는 시가총액이 "코스피n위" 형식으로 나올 수 있음
-                        # 실제 시가총액 값을 추출하기 위해 별도 작업 필요
+                        # 네이버 금융에서 실제 시가총액 값을 추출 (개선된 방법)
                         try:
-                            # 시가총액 값 추출 시도 (현재가 * 상장주식수)
-                            stock_info_table = soup.select_one('div.first table.tb_type1')
-                            if stock_info_table:
-                                rows = stock_info_table.select('tr')
-                                for row in rows:
+                            # 방법 1: 기본 테이블에서 시가총액 추출
+                            for table in soup.select('table'):
+                                for row in table.select('tr'):
                                     th = row.select_one('th')
                                     if th and '시가총액' in th.text:
                                         td = row.select_one('td')
                                         if td:
                                             cap_text = td.text.strip()
-                                            # 숫자만 추출 (억, 조 등 단위 제외)
-                                            import re
-                                            cap_match = re.search(r'([0-9,]+)억원|([0-9,]+)조\s*([0-9,]*)억원', cap_text)
-                                            if cap_match:
-                                                if cap_match.group(1):  # n억원 형식
-                                                    data['시가총액'] = cap_match.group(1).replace(',', '')
-                                                elif cap_match.group(2):  # n조 m억원 형식
-                                                    trillions = int(cap_match.group(2).replace(',', ''))
-                                                    billions = int(cap_match.group(3).replace(',', '') or '0')
-                                                    # 조 단위를 억 단위로 변환 (1조 = 10000억)
+                                            # 숫자만 추출
+                                            if cap_text.replace(',', '').isdigit():
+                                                data['시가총액'] = cap_text.replace(',', '')
+                                                break
+                            
+                            # 방법 2: 조 단위 시가총액 추출 (더 일반적인 형태)
+                            if not data['시가총액'] or data['시가총액'].startswith('코스피') or data['시가총액'].startswith('코스닥'):
+                                import re
+                                for table in soup.select('table'):
+                                    for row in table.select('tr'):
+                                        th = row.select_one('th')
+                                        if th and '시가총액' in th.text:
+                                            td = row.select_one('td')
+                                            if td:
+                                                cap_text = td.text.strip()
+                                                
+                                                # n조 m억원 패턴
+                                                cap_match = re.search(r'([0-9,]+)조\s*([0-9,]*)억원', cap_text)
+                                                if cap_match:
+                                                    trillions = int(cap_match.group(1).replace(',', ''))
+                                                    billions = int(cap_match.group(2).replace(',', '') or '0')
                                                     total_billions = trillions * 10000 + billions
                                                     data['시가총액'] = str(total_billions)
-                            else:
-                                # 기존 값 그대로 사용
+                                                    break
+                                                
+                                                # n억원 패턴
+                                                cap_match = re.search(r'([0-9,]+)억원', cap_text)
+                                                if cap_match:
+                                                    data['시가총액'] = cap_match.group(1).replace(',', '')
+                                                    break
+                            
+                            # 여전히 추출 실패한 경우 기존 값 사용
+                            if not data['시가총액'] or data['시가총액'].startswith('코스피') or data['시가총액'].startswith('코스닥'):
                                 data['시가총액'] = value
+                                
                         except Exception as e:
                             print(f"  시가총액 추출 중 오류: {e}")
                             # 기존 값 그대로 사용
                             data['시가총액'] = value
                     elif '매출액' in header:
                         data['매출액'] = extract_financial_value(value)
-                    elif '영업이익' in header:
-                        data['영업이익'] = extract_financial_value(value)
+                    elif '영업이익' in header and '증가율' not in header and '률' not in header:
+                        # '영업이익증가율'이나 '영업이익률'과 구분하기 위한 정확한 매칭
+                        if header.strip() == '영업이익' or header.strip() == '영업이익(억)' or header.strip() == '조정영업이익(억)':
+                            data['영업이익'] = extract_financial_value(value)
                     elif '당기순이익' in header:
                         data['당기순이익'] = extract_financial_value(value)
                     elif '부채비율' in header:
