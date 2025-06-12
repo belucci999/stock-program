@@ -424,7 +424,7 @@ def extract_latest_financial_ratios(soup, data):
                 if latest_col_index == -1:
                     continue
                 
-                # 각 행에서 PER, PBR, ROE 추출
+                # 각 행에서 PER, PBR, ROE, 부채비율, 유보율 추출
                 for row in rows:
                     cells = row.find_all(['td', 'th'])
                     if len(cells) > latest_col_index:
@@ -488,16 +488,47 @@ def extract_latest_financial_ratios(soup, data):
                                 data['영업이익률'] = latest_value
                                 print(f"✅ 최신 영업이익률 추출 (2025.03): {data['영업이익률']}")
                         
-                        # 순이익률 추출 (추가 지표)
+                        # 순이익률 추출
                         elif '순이익률' in first_cell_text and not data.get('순이익률'):
                             if latest_value and latest_value != '' and latest_value != '-':
                                 data['순이익률'] = latest_value
                                 print(f"✅ 최신 순이익률 추출 (2025.03): {data['순이익률']}")
-                
-                break  # 테이블 찾았으면 종료
+                        
+                        # 부채비율 추출 ⭐ 추가
+                        elif '부채비율' in first_cell_text and not data['부채비율']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                try:
+                                    debt_value = float(latest_value)
+                                    if 0 <= debt_value <= 1000:  # 합리적인 부채비율 범위
+                                        data['부채비율'] = latest_value
+                                        print(f"✅ 최신 부채비율 추출 (2025.03): {data['부채비율']}%")
+                                except:
+                                    pass
+                        
+                        # 유보율 추출 ⭐ 추가
+                        elif '유보율' in first_cell_text and not data['유보율']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                try:
+                                    retention_value = float(latest_value.replace(',', ''))
+                                    if retention_value > 0:  # 유보율은 보통 큰 값
+                                        data['유보율'] = latest_value
+                                        print(f"✅ 최신 유보율 추출 (2025.03): {data['유보율']}%")
+                                except:
+                                    pass
+                        
+                        # 배당금 추출 ⭐ 추가
+                        elif '주당배당금' in first_cell_text and not data['배당금']:
+                            if latest_value and latest_value != '' and latest_value != '-':
+                                try:
+                                    dividend_value = float(latest_value.replace(',', ''))
+                                    if dividend_value > 0:
+                                        data['배당금'] = latest_value
+                                        print(f"✅ 최신 배당금 추출 (2025.03): {data['배당금']}원")
+                                except:
+                                    pass
     
     except Exception as e:
-        print(f"최신 재무비율 추출 오류: {str(e)}")
+        print(f"재무비율 추출 오류: {str(e)}")
 
 def extract_main_page_data(soup, data):
     """메인 페이지에서 모든 주요 정보 추출 (PER, PBR, ROE, 시가총액, 52주 최고/최저, 배당수익률)"""
@@ -529,27 +560,78 @@ def extract_main_page_data(soup, data):
         # 3. 전체 페이지 텍스트에서 52주 최고/최저, 시가총액, 거래대금 추출
         page_text = soup.get_text()
         
-        # 52주 최고/최저 추출 (여러 패턴 시도)
-        if not data['52주최고']:
-            # 패턴 1: "88,800l49,900" 형태
+        # 52주 최고/최저 추출 (강화된 패턴) ⭐ 개선
+        if not data['52주최고'] or not data['52주최저']:
             patterns = [
-                r'52주최고l최저[^\d]*?([,\d]+)l([,\d]+)',
+                # 패턴 1: "52주최고l최저: 88,800l49,900" 형태
+                r'52주최고[^\d]*?최저[^\d]*?([,\d]+)[^\d]*?([,\d]+)',
+                # 패턴 2: "52주 최고 88,800 최저 49,900" 형태  
                 r'52주\s*최고[^\d]*?([,\d]+)[^\d]*?최저[^\d]*?([,\d]+)',
+                # 패턴 3: "최고 88,800 최저 49,900" 형태
                 r'최고[^\d]*?([,\d]+)[^\d]*?최저[^\d]*?([,\d]+)',
-                r'([,\d]+)l([,\d]+)',  # 간단한 패턴
+                # 패턴 4: "88,800l49,900" 간단한 형태 (52주 관련 텍스트 근처에서만)
+                r'([,\d]{5,})l([,\d]{5,})',
+                # 패턴 5: 세로 막대 구분자
+                r'([,\d]{5,})\|([,\d]{5,})',
             ]
             
-            for pattern in patterns:
-                combined_52_match = re.search(pattern, page_text)
-                if combined_52_match:
-                    high = combined_52_match.group(1).replace(',', '')
-                    low = combined_52_match.group(2).replace(',', '')
-                    # 합리적인 값인지 확인 (4자리 이상, high > low)
-                    if len(high) >= 4 and len(low) >= 4 and int(high) > int(low):
-                        data['52주최고'] = high
-                        data['52주최저'] = low
-                        print(f"✅ 52주 최고/최저 추출: {data['52주최고']}/{data['52주최저']}")
-                        break
+            for i, pattern in enumerate(patterns):
+                if data['52주최고'] and data['52주최저']:
+                    break
+                    
+                matches = re.finditer(pattern, page_text)
+                for match in matches:
+                    high = match.group(1).replace(',', '')
+                    low = match.group(2).replace(',', '')
+                    
+                    # 합리적인 값인지 확인
+                    try:
+                        high_val = int(high)
+                        low_val = int(low)
+                        
+                        # 조건: 4자리 이상, high > low, 현실적인 주가 범위
+                        if (len(high) >= 4 and len(low) >= 4 and 
+                            high_val > low_val and 
+                            100 <= low_val <= 1000000 and 
+                            100 <= high_val <= 1000000):
+                            
+                            data['52주최고'] = high
+                            data['52주최저'] = low
+                            print(f"✅ 52주 최고/최저 추출 (패턴{i+1}): {data['52주최고']}/{data['52주최저']}")
+                            break
+                    except:
+                        continue
+        
+        # 테이블에서 52주 최고/최저 직접 찾기 (백업) ⭐ 추가
+        if not data['52주최고'] or not data['52주최저']:
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    for cell in cells:
+                        cell_text = cell.get_text(strip=True)
+                        
+                        # "88,800l49,900" 같은 패턴 찾기
+                        if 'l' in cell_text and len(cell_text) < 20:  # 너무 긴 텍스트는 제외
+                            parts = cell_text.split('l')
+                            if len(parts) == 2:
+                                try:
+                                    high = parts[0].replace(',', '').strip()
+                                    low = parts[1].replace(',', '').strip()
+                                    
+                                    if (high.isdigit() and low.isdigit() and 
+                                        len(high) >= 4 and len(low) >= 4 and
+                                        int(high) > int(low)):
+                                        
+                                        data['52주최고'] = high
+                                        data['52주최저'] = low
+                                        print(f"✅ 52주 최고/최저 추출 (테이블): {data['52주최고']}/{data['52주최저']}")
+                                        break
+                                except:
+                                    continue
+                if data['52주최고'] and data['52주최저']:
+                    break
         
         # 시가총액 추출
         if not data['시가총액']:
