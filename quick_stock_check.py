@@ -320,52 +320,71 @@ def get_individual_stock_data(code, name):
         return ('',) * 18  # 18개 빈 값 반환
 
 def extract_investment_indicators(soup, data):
-    """종목정보 페이지의 투자지표 테이블에서 최신 데이터 추출 (가장 오른쪽 컬럼)"""
+    """종목정보 페이지의 투자지표 테이블에서 최신 데이터 추출 (올바른 위치에서)"""
     try:
         tables = soup.find_all('table')
         
         for table in tables:
             table_text = table.get_text()
             
-            # 투자지표 테이블 찾기 (PER, PBR 등이 포함된)
-            if any(keyword in table_text for keyword in ['PER', 'PBR', '배당수익률']):
+            # PER/PBR 전용 테이블 찾기 (테이블 10번 - PER/EPS 박스)
+            if 'PERlEPS' in table_text and 'PBRlBPS' in table_text:
                 rows = table.find_all('tr')
                 
                 for row in rows:
                     cells = row.find_all(['td', 'th'])
-                    if len(cells) >= 2:  # 최소 2개 컬럼
+                    if len(cells) >= 2:
                         first_cell_text = cells[0].get_text(strip=True)
+                        second_cell_text = cells[1].get_text(strip=True)
                         
-                        # 가장 오른쪽 컬럼(최신 데이터)에서 값 추출
-                        latest_cell_text = cells[-1].get_text(strip=True)
-                        
-                        # PER 추출 (추정PER 제외하고 정확한 PER만)
-                        if 'PER' in first_cell_text and '추정' not in first_cell_text and not data['PER']:
+                        # PER 추출 (PERlEPS 행에서)
+                        if 'PERlEPS' in first_cell_text and '추정' not in first_cell_text and not data['PER']:
                             # "11.53배l5,162원" 형태에서 PER 값 추출
-                            per_match = re.search(r'([+-]?\d+\.?\d*)배', latest_cell_text)
+                            per_match = re.search(r'([+-]?\d+\.?\d*)배', second_cell_text)
                             if per_match:
                                 per_value = float(per_match.group(1))
                                 if 0 < per_value < 1000:  # 합리적인 PER 범위
                                     data['PER'] = per_match.group(1)
-                                    print(f"✅ PER 추출 성공: {data['PER']}")
+                                    print(f"✅ 올바른 PER 추출: {data['PER']}배")
                         
-                        # PBR 추출  
-                        elif 'PBR' in first_cell_text and not data['PBR']:
-                            # "N/Al59,059원" 또는 "1.09배l..." 형태
-                            if 'N/A' not in latest_cell_text:
-                                pbr_match = re.search(r'([+-]?\d+\.?\d*)배?', latest_cell_text)
-                                if pbr_match:
-                                    pbr_value = float(pbr_match.group(1))
-                                    if 0 < pbr_value < 100:  # 합리적인 PBR 범위
-                                        data['PBR'] = pbr_match.group(1)
-                                        print(f"✅ PBR 추출 성공: {data['PBR']}")
+                        # PBR 추출 (PBRlBPS 행에서)
+                        elif 'PBRlBPS' in first_cell_text and not data['PBR']:
+                            # "1.01배l59,059원" 형태에서 PBR 값 추출
+                            pbr_match = re.search(r'([+-]?\d+\.?\d*)배', second_cell_text)
+                            if pbr_match:
+                                pbr_value = float(pbr_match.group(1))
+                                if 0 < pbr_value < 100:  # 합리적인 PBR 범위
+                                    data['PBR'] = pbr_match.group(1)
+                                    print(f"✅ 올바른 PBR 추출: {data['PBR']}배")
                         
                         # 배당수익률 추출
                         elif '배당수익률' in first_cell_text and not data['배당수익률']:
                             # "2.43%" 형태
-                            dividend_match = re.search(r'([+-]?\d+\.?\d*)%', latest_cell_text)
+                            dividend_match = re.search(r'([+-]?\d+\.?\d*)%', second_cell_text)
                             if dividend_match:
                                 data['배당수익률'] = dividend_match.group(1)
+                                print(f"✅ 배당수익률 추출: {data['배당수익률']}%")
+            
+            # 동종업종비교 테이블에서 시가총액 추출 (정확한 위치)
+            elif '동종업종비교' in table_text and '삼성전자' in table_text:
+                rows = table.find_all('tr')
+                
+                # 삼성전자가 첫 번째 컬럼에 있는 테이블에서 시가총액 추출
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:
+                        first_cell_text = cells[0].get_text(strip=True)
+                        
+                        # 시가총액(억) 행 찾기
+                        if '시가총액' in first_cell_text and '억' in first_cell_text:
+                            # 삼성전자는 두 번째 컬럼 (인덱스 1)
+                            if len(cells) > 1 and not data['시가총액']:
+                                samsung_cap = cells[1].get_text(strip=True).replace(',', '')
+                                # 숫자만 추출
+                                cap_match = re.search(r'^([0-9,]+)', samsung_cap)
+                                if cap_match:
+                                    data['시가총액'] = cap_match.group(1).replace(',', '')
+                                    print(f"✅ 올바른 시가총액 추출: {data['시가총액']}억원")
     
     except Exception as e:
         print(f"투자지표 추출 오류: {str(e)}")
