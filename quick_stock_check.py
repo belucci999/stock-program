@@ -635,11 +635,19 @@ def extract_main_page_data(soup, data):
         
         # 시가총액 추출
         if not data['시가총액']:
-            # "3,522,184억원" 패턴
-            market_cap_match = re.search(r'시가총액[^\d]*?([,\d]+)억원', page_text)
-            if market_cap_match:
-                data['시가총액'] = market_cap_match.group(1).replace(',', '')
-                print(f"✅ 시가총액 추출: {data['시가총액']}억원")
+            # 1. '조'와 '억'이 모두 있는 경우
+            jo_ok_match = re.search(r'시가총액[\s:]*([0-9,]+)조\s*([0-9,]+)?억원', soup.get_text())
+            if jo_ok_match:
+                jo = int(jo_ok_match.group(1).replace(',', ''))
+                ok = int(jo_ok_match.group(2).replace(',', '')) if jo_ok_match.group(2) else 0
+                data['시가총액'] = str(jo * 10000 + ok)
+                print(f"✅ 시가총액 추출(조+억): {jo}조 {ok}억 → {data['시가총액']}억")
+            else:
+                # 2. '억원'만 있는 경우
+                market_cap_match = re.search(r'시가총액[^\d]*?([,\d]+)억원', soup.get_text())
+                if market_cap_match:
+                    data['시가총액'] = market_cap_match.group(1).replace(',', '')
+                    print(f"✅ 시가총액 추출: {data['시가총액']}억원")
         
         # 거래대금 추출
         if not data['거래대금']:
@@ -904,7 +912,7 @@ def extract_additional_finance_data(soup, data):
         print(f"추가 재무 데이터 추출 오류: {str(e)}")
 
 def get_stock_data():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'}
     stock_data = []
     
     for market_type in [0, 1]:
