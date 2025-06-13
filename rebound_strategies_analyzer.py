@@ -86,8 +86,8 @@ class ReboundAnalyzer:
         """거래량 급감 전략 분석
         핵심 조건:
         1. 전일 대비 거래량 500~1000% 이상 증가 (폭등)
-        2. 다음 날 거래량 전일의 25% 이하 (이상적으로 12% 이하)
-        3. 5% 이상 하락 음봉 발생
+        2. 다음 날 거래량 전일의 20% 이하 (이상적으로 12% 이하)
+        3. 1% 이상 하락 음봉 발생
         4. 음봉 고점 돌파 시 매수 타이밍
         """
         try:
@@ -107,15 +107,15 @@ class ReboundAnalyzer:
             # 조건 1: 어제 거래량이 그저께 대비 500% 이상 증가
             volume_surge = (yesterday['volume'] / day_before['volume']) >= 5.0  # 500% 이상
             
-            # 조건 2: 오늘 거래량이 어제의 25% 이하 (이상적으로 12% 이하)
+            # 조건 2: 오늘 거래량이 어제의 20% 이하 (이상적으로 12% 이하)
             volume_drop_ratio = today['volume'] / yesterday['volume']
-            volume_drop = volume_drop_ratio <= 0.25  # 25% 이하
+            volume_drop = volume_drop_ratio <= 0.20  # 20% 이하
             ideal_drop = volume_drop_ratio <= 0.12   # 12% 이하 (더 강한 신호)
             
-            # 조건 3: 오늘 5% 이상 하락 음봉
-            red_candle = today['price_change'] <= -5.0
+            # 조건 3: 오늘 1% 이상 하락 음봉
+            red_candle = today['price_change'] <= -1.0
             
-            # 조건 4: 5일선과의 이격 확인 (보조 조건)
+            # 조건 4: 5일선과의 이격 확인 (10% 이내)
             if len(historical_data) >= 5:
                 ma5 = historical_data.tail(5)['close'].mean()
                 gap_from_ma5 = abs((today['close'] - ma5) / ma5) * 100
@@ -331,7 +331,7 @@ class ReboundAnalyzer:
             return False
 
     def analyze_stock(self, stock_data):
-        """개별 종목에 대한 리바운드 전략 분석"""
+        """개별 종목에 대한 리바운드 전략 분석 (거래량 급감 전략만 실행)"""
         try:
             code = stock_data.get('종목코드', '')
             name = stock_data.get('종목명', '')
@@ -346,24 +346,11 @@ class ReboundAnalyzer:
             if historical_data is None or historical_data.empty:
                 return
             
-            # 1. 거래량 급감 전략 분석
+            # 거래량 급감 전략만 실행
             volume_result = self.analyze_volume_drop(stock_data, historical_data)
             if volume_result:
                 self.results['volume_drop'].append(volume_result)
                 print(f"    ✅ 거래량 급감 신호 발견: {name}")
-            
-            # 2. 45일선 전략 분석
-            ma45_result = self.analyze_ma45(stock_data, historical_data)
-            if ma45_result:
-                self.results['ma45'].append(ma45_result)
-                print(f"    ✅ 45일선 신호 발견: {name}")
-            
-            # 3. 360일선 전략 분석
-            ma360_result = self.analyze_ma360(stock_data, historical_data)
-            if ma360_result:
-                self.results['ma360'].append(ma360_result)
-                print(f"    ✅ 360일선 신호 발견: {name}")
-                    
         except Exception as e:
             print(f"종목 분석 중 오류 발생 ({stock_data.get('종목명', 'Unknown')}): {str(e)}")
 
