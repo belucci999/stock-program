@@ -6,9 +6,9 @@ import os
 import time
 
 def test_google_sheets_fixed():
-    """구글 시트 + 드라이브 API 테스트"""
+    """구글 시트 권한 부여 및 찾기"""
     
-    print("🔍 구글 시트 연결 재테스트 중...")
+    print("🔍 기존 구글 시트 찾기 및 권한 부여...")
     
     try:
         # 구글 시트 + 드라이브 API 연결
@@ -20,32 +20,60 @@ def test_google_sheets_fixed():
         creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
         gc = gspread.authorize(creds)
         
+        from googleapiclient.discovery import build
+        drive_service = build('drive', 'v3', credentials=creds)
+        
         print("✅ 구글 시트 인증 성공!")
-        print("⏳ Drive API 테스트 중...")
         
-        # 테스트 스프레드시트 생성 (Drive API 사용)
-        test_name = f"주식분석_테스트_{datetime.now().strftime('%Y%m%d_%H%M')}"
+        # 기존 스프레드시트 찾기
+        print("🔍 서비스 계정 드라이브에서 스프레드시트 검색 중...")
+        results = drive_service.files().list(
+            q="mimeType='application/vnd.google-apps.spreadsheet'",
+            fields="files(id, name, createdTime)"
+        ).execute()
         
-        # Drive API가 활성화되어 있는지 테스트
-        spreadsheet = gc.create(test_name)
+        files = results.get('files', [])
         
-        print("✅ Google Drive API 작동 확인!")
-        print(f"✅ 테스트 스프레드시트 생성: {test_name}")
-        print(f"🔗 URL: {spreadsheet.url}")
+        if not files:
+            print("❌ 기존 구글 시트를 찾을 수 없습니다. 새로 생성합니다...")
+            # 새 시트 생성
+            test_name = f"주식분석_데이터_{datetime.now().strftime('%Y%m%d_%H%M')}"
+            spreadsheet = gc.create(test_name)
+            sheet_id = spreadsheet.id
+            sheet_name = test_name
+        else:
+            print(f"📋 발견된 스프레드시트 ({len(files)}개):")
+            for i, file in enumerate(files):
+                print(f"{i+1}. {file['name']} (ID: {file['id']})")
+            
+            # 가장 최근 생성된 시트 선택
+            latest_sheet = max(files, key=lambda x: x['createdTime'])
+            sheet_id = latest_sheet['id']
+            sheet_name = latest_sheet['name']
+            print(f"✅ 최신 시트 선택: {sheet_name}")
         
-        # 데이터 입력 테스트
-        worksheet = spreadsheet.sheet1
-        worksheet.update('A1', [
-            ['테스트 항목', '결과'],
-            ['Google Sheets API', '✅ 성공'],
-            ['Google Drive API', '✅ 성공'],
-            ['테스트 시간', datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-            ['상태', '모든 API 준비 완료!']
-        ])
+        # hyjkoo17@gmail.com에게 편집 권한 부여
+        print("📧 hyjkoo17@gmail.com에게 편집 권한 부여 중...")
+        permission = {
+            'type': 'user',
+            'role': 'writer',
+            'emailAddress': 'hyjkoo17@gmail.com'
+        }
         
-        print("✅ 모든 테스트 성공!")
-        print("🎉 구글 시트 자동화 준비 완료!")
-        print("📱 구글 드라이브에서 결과를 확인해보세요!")
+        result = drive_service.permissions().create(
+            fileId=sheet_id,
+            body=permission,
+            sendNotificationEmail=True
+        ).execute()
+        
+        print("🎉 성공! hyjkoo17@gmail.com에게 편집 권한 부여 완료")
+        print("📧 알림 이메일이 발송되었습니다")
+        print(f"🔗 구글 시트 링크: https://docs.google.com/spreadsheets/d/{sheet_id}")
+        
+        # 환경변수 파일 생성
+        with open('.env', 'w') as f:
+            f.write(f"SPREADSHEET_ID={sheet_id}\n")
+        print("📝 .env 파일에 SPREADSHEET_ID 저장 완료")
         
         return True
         

@@ -13,14 +13,26 @@ load_dotenv()
 
 class GoogleSheetsUploader:
     def __init__(self):
+        # 환경 변수 로드
+        load_dotenv()
+        
         self.SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
         self.CREDENTIALS_FILE = 'credentials.json'
         self.SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
         
+        if not self.SPREADSHEET_ID:
+            print("⚠️ SPREADSHEET_ID가 설정되지 않았습니다.")
+            return
+        
         # Google Sheets API 인증
-        self.credentials = service_account.Credentials.from_service_account_file(
-            self.CREDENTIALS_FILE, scopes=self.SCOPES)
-        self.service = build('sheets', 'v4', credentials=self.credentials)
+        try:
+            self.credentials = service_account.Credentials.from_service_account_file(
+                self.CREDENTIALS_FILE, scopes=self.SCOPES)
+            self.service = build('sheets', 'v4', credentials=self.credentials)
+            print("✅ 구글 시트 API 인증 성공")
+        except Exception as e:
+            print(f"❌ 구글 시트 API 인증 실패: {str(e)}")
+            self.service = None
     
     def create_sheet(self, sheet_name):
         """새로운 시트 생성"""
