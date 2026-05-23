@@ -3,6 +3,7 @@ from console_utf8 import enable as enable_utf8_console
 
 enable_utf8_console()
 
+import argparse
 import subprocess
 import sys
 import time
@@ -11,10 +12,11 @@ import glob
 import pandas as pd
 from datetime import datetime
 from google_sheets_uploader import GoogleSheetsUploader
+from market_calendar import resolve_sheet_tab
 from stock_data_utils import fill_trading_amounts_df
 
 
-def run_python_script(script_name, description):
+def run_python_script(script_name, description, extra_args=None):
     """Python 스크립트 실행"""
     print(f"\n{'='*60}")
     print(f"[시작] {description}")
@@ -29,8 +31,12 @@ def run_python_script(script_name, description):
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
 
+        cmd = [python_path, script_path]
+        if extra_args:
+            cmd.extend(extra_args)
+
         result = subprocess.run(
-            [python_path, script_path],
+            cmd,
             cwd=os.getcwd(),
             env=env,
         )
@@ -64,7 +70,7 @@ def find_latest_files():
     return latest_stock_data, latest_analysis
 
 
-def upload_to_google_sheets(stock_data_file, analysis_file):
+def upload_to_google_sheets(stock_data_file, analysis_file, sheet_tab: str):
     """
     구글 시트에 날짜별 탭(YYYY-MM-DD)으로 업로드.
     같은 날 다시 실행하면 해당 탭을 비운 뒤 덮어씀.
@@ -76,7 +82,7 @@ def upload_to_google_sheets(stock_data_file, analysis_file):
         print("[오류] 구글 시트 연결 실패 (credentials/google-sa.json, .env SPREADSHEET_ID 확인)")
         return False
 
-    date_tab = datetime.now().strftime('%Y-%m-%d')
+    date_tab = sheet_tab
     run_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     contrarian_count = 0
     stock_count = 0
@@ -167,11 +173,21 @@ def upload_to_google_sheets(stock_data_file, analysis_file):
         return False
 
 
-def main():
+def main(sheet_tab: str | None = None):
     """매일 주식 분석 + 구글 시트 업로드 자동화 (전체 전략)"""
+    parser = argparse.ArgumentParser(description="전체 주식 전략 일괄 실행")
+    parser.add_argument(
+        "--sheet-tab",
+        default="",
+        help="구글 시트 탭 YYYY-MM-DD (미지정 시 오늘 또는 직전 거래일)",
+    )
+    args = parser.parse_args()
+    tab = resolve_sheet_tab(sheet_tab or args.sheet_tab or None)
+
     print("=" * 60)
     print("매일 주식 분석 + 구글 시트 자동화 (전체 전략)")
     print(f"실행: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"구글 시트 탭: {tab}")
     print(f"경로: {os.getcwd()}")
     print("=" * 60)
 
@@ -197,18 +213,20 @@ def main():
         time.sleep(5)
         stock_data_file, analysis_file = find_latest_files()
         if stock_data_file or analysis_file:
-            upload_success = upload_to_google_sheets(stock_data_file, analysis_file)
+            upload_success = upload_to_google_sheets(stock_data_file, analysis_file, tab)
         else:
             print("[오류] 업로드할 파일 없음")
 
     ma20_success = run_python_script(
         "ma20_breakout_screener.py",
         "20일선 상향 돌파 스크리닝",
+        extra_args=["--sheet-tab", tab],
     )
 
     rebound_success = run_python_script(
         "daily_rebound_analysis.py",
         "리바운드 전략 (거래량급감·45일선·360일선)",
+        extra_args=["--sheet-tab", tab],
     )
 
     print(f"\n{'='*60}")

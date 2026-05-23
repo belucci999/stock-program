@@ -110,11 +110,10 @@ class GoogleSheetsUploader:
         except Exception as e:
             print(f"데이터 업데이트 중 오류 발생: {str(e)}")
     
-    def upload_rebound_signals(self, results):
+    def upload_rebound_signals(self, results, date_str: str | None = None):
         """리바운드 신호 업로드"""
         try:
-            # 현재 날짜로 시트 이름 생성
-            date_str = datetime.now().strftime('%Y-%m-%d')
+            date_str = date_str or datetime.now().strftime('%Y-%m-%d')
             
             # 전략별 시트 생성 및 업데이트
             strategies = {

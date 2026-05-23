@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import glob
@@ -6,6 +7,7 @@ import pandas as pd
 from quick_stock_check import get_stock_data, is_regular_stock  # 기존 코드 활용
 from rebound_strategies_analyzer import ReboundAnalyzer
 from google_sheets_uploader import GoogleSheetsUploader
+from market_calendar import resolve_sheet_tab
 
 def get_latest_stock_data_file():
     """가장 최근에 생성된 주식 데이터 파일 찾기"""
@@ -316,9 +318,11 @@ def run_ma360_strategy():
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
 
-def run_all_strategies():
+def run_all_strategies(sheet_tab: str | None = None):
     """모든 리바운드 전략 실행"""
+    tab = resolve_sheet_tab(sheet_tab)
     print(f"🚀 전체 리바운드 전략 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+    print(f"   구글 시트 탭 접두: {tab}")
     
     try:
         # 데이터 수집 또는 로드
@@ -336,7 +340,7 @@ def run_all_strategies():
         # 구글 시트 업로드
         print("3. 구글 시트 업로드 중...")
         uploader = GoogleSheetsUploader()
-        uploader.upload_rebound_signals(results)
+        uploader.upload_rebound_signals(results, date_str=tab)
         
         # 엑셀 파일 저장
         print("4. 엑셀 파일 저장 중...")
@@ -355,26 +359,37 @@ def run_all_strategies():
 
 def main():
     """명령줄 인수에 따라 특정 전략 실행"""
-    # 명령줄 인수 확인
-    if len(sys.argv) > 1:
-        strategy = sys.argv[1].lower()
-        
-        if strategy == "1" or strategy == "volume" or strategy == "volume_drop":
-            run_volume_drop_strategy()
-        elif strategy == "2" or strategy == "ma45":
-            run_ma45_strategy()
-        elif strategy == "3" or strategy == "ma360":
-            run_ma360_strategy()
-        else:
-            print("❌ 잘못된 전략 이름입니다.")
-            print("사용법: python daily_rebound_analysis.py [전략번호 또는 이름]")
-            print("  - 전략 1: 거래량급감 (volume_drop 또는 1)")
-            print("  - 전략 2: 45일선 (ma45 또는 2)")
-            print("  - 전략 3: 360일선 (ma360 또는 3)")
-            print("  - 전체 전략: 인수 없이 실행")
+    parser = argparse.ArgumentParser(description="리바운드 전략 분석")
+    parser.add_argument(
+        "strategy",
+        nargs="?",
+        default="",
+        help="volume_drop(1), ma45(2), ma360(3). 생략 시 전체",
+    )
+    parser.add_argument(
+        "--sheet-tab",
+        default="",
+        help="구글 시트 탭 접두 YYYY-MM-DD (미지정 시 오늘 또는 직전 거래일)",
+    )
+    args = parser.parse_args()
+    tab = resolve_sheet_tab(args.sheet_tab or None)
+
+    strategy = (args.strategy or "").lower()
+    if not strategy:
+        run_all_strategies(sheet_tab=tab)
+    elif strategy in ("1", "volume", "volume_drop"):
+        run_volume_drop_strategy()
+    elif strategy in ("2", "ma45"):
+        run_ma45_strategy()
+    elif strategy in ("3", "ma360"):
+        run_ma360_strategy()
     else:
-        # 인수가 없으면 모든 전략 실행
-        run_all_strategies()
+        print("❌ 잘못된 전략 이름입니다.")
+        print("사용법: python daily_rebound_analysis.py [전략] [--sheet-tab YYYY-MM-DD]")
+        print("  - 전략 1: 거래량급감 (volume_drop 또는 1)")
+        print("  - 전략 2: 45일선 (ma45 또는 2)")
+        print("  - 전략 3: 360일선 (ma360 또는 3)")
+        print("  - 전체 전략: 인수 없이 실행")
 
 if __name__ == "__main__":
     main() 

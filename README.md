@@ -73,6 +73,23 @@ python daily_auto_stock_analysis.py
 | 4 | `ma20_breakout_screener.py` | 20일선 상향 돌파 + 시트 섹션 추가 |
 | 5 | `daily_rebound_analysis.py` | 거래량급감·45일선·360일선 리바운드 |
 
+### 휴장일·주말에 직전 거래일 기준 실행
+
+스케줄러는 휴장일에 자동으로 건너뜁니다. **금요일 장 마감 데이터를 토·일·공휴일에 돌리려면:**
+
+```bash
+# 직전 거래일 탭(예: 2026-05-22)에 전체 전략 업로드
+python run_scheduled_analysis.py --force
+
+# 탭 이름을 직접 지정
+python run_scheduled_analysis.py --force --sheet-tab 2026-05-22
+
+# 스케줄러 우회 없이 동일
+python daily_auto_stock_analysis.py --sheet-tab 2026-05-22
+```
+
+`--force` 미지정 시 `--sheet-tab`만 주면 `daily_auto_stock_analysis.py`에서도 동일하게 동작합니다.
+
 ### 매일 17:00 자동 실행 (거래일만)
 
 **Windows (권장)** — 작업 스케줄러 등록:
