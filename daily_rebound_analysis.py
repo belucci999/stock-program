@@ -117,243 +117,107 @@ def save_to_excel(results, strategy_name=None):
     except Exception as e:
         print(f"❌ 엑셀 파일 저장 중 오류 발생: {str(e)}")
 
-def run_volume_drop_strategy():
+STRATEGY_LABELS = {
+    'volume_drop': '거래량 급감',
+    'ma45': '45일선',
+    'ma360': '360일선',
+}
+
+
+def _print_rebound_summary(results):
+    print("\n📊 분석 결과 요약:")
+    print(f"- 거래량 급감 전략: {len(results['volume_drop'])}개 종목")
+    print(f"- 45일선 전략: {len(results['ma45'])}개 종목")
+    print(f"- 360일선 전략: {len(results['ma360'])}개 종목")
+
+
+def _run_rebound_analysis(strategies, sheet_tab=None, excel_suffix=None, title="리바운드"):
+    """지정 전략을 전 종목에 대해 실행 후 구글 시트·엑셀 저장."""
+    tab = resolve_sheet_tab(sheet_tab)
+    labels = [STRATEGY_LABELS[s] for s in strategies]
+    print(f"🚀 {title} 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+    print(f"   전략: {', '.join(labels)}")
+    print(f"   구글 시트 탭 접두: {tab}")
+
+    print("1. 주가 데이터 준비 중...")
+    stock_data = load_or_collect_stock_data()
+
+    print("2. 리바운드 신호 분석 중...")
+    analyzer = ReboundAnalyzer()
+    total = len(stock_data)
+    for i, data in enumerate(stock_data, start=1):
+        if i % 50 == 0:
+            print(f"   ... 진행 {i}/{total}")
+        if is_regular_stock(data.get('종목명', '')):
+            analyzer.analyze_stock(data, strategies=strategies)
+
+    results = analyzer.get_results()
+
+    print("3. 구글 시트 업로드 중...")
+    uploader = GoogleSheetsUploader()
+    if getattr(uploader, 'gc', None):
+        uploader.upload_rebound_signals(results, date_str=tab, strategy_keys=strategies)
+    else:
+        print("⚠️ 구글 시트 연결 실패 — 엑셀만 저장합니다.")
+
+    print("4. 엑셀 파일 저장 중...")
+    save_to_excel(results, excel_suffix)
+
+    print("✅ 분석 완료!")
+    _print_rebound_summary(results)
+    return results
+
+
+def run_volume_drop_strategy(sheet_tab: str | None = None):
     """거래량 급감 전략만 실행"""
-    print(f"🚀 거래량 급감 전략 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
-    
     try:
-        # 데이터 수집 또는 로드
-        print("1. 주가 데이터 준비 중...")
-        stock_data = load_or_collect_stock_data()
-        
-        # 리바운드 분석
-        print("2. 거래량 급감 신호 분석 중...")
-        analyzer = ReboundAnalyzer()
-        
-        # 데이터 필드 확인
-        sample_data = stock_data[0] if stock_data else {}
-        print(f"   데이터 필드: {', '.join(sample_data.keys())}")
-        
-        # 거래량 필드 매핑
-        volume_field = '거래량'
-        prev_volume_field = '전일거래량'
-        
-        # 필드 존재 확인
-        if volume_field not in sample_data or prev_volume_field not in sample_data:
-            print(f"⚠️ 필요한 거래량 필드가 없습니다: {volume_field}, {prev_volume_field}")
-            return
-        
-        # 거래량 급감 전략만 분석
-        count = 0
-        signals = 0
-        total = len(stock_data)
-        
-        for data in stock_data:
-            count += 1
-            if count % 100 == 0:
-                print(f"   진행 중... {count}/{total} 종목 분석")
-                
-            if is_regular_stock(data['종목명']):
-                # 거래량 급감 전략 분석
-                if analyzer.analyze_volume_drop(data):
-                    signals += 1
-                    if signals % 10 == 0:
-                        print(f"   {signals}개 신호 발견...")
-        
-        results = analyzer.get_results()
-        
-        # 구글 시트 업로드
-        print("3. 구글 시트 업로드 중...")
-        uploader = GoogleSheetsUploader()
-        if uploader.setup_connection():
-            # 시트 이름 설정
-            today = datetime.now().strftime('%Y%m%d')
-            sheet_name = f'거래량급감_{today}'
-            
-            # 결과가 있는 경우에만 업로드
-            if results['volume_drop'] and len(results['volume_drop']) > 0:
-                df = pd.DataFrame(results['volume_drop'])
-                uploader.upload_dataframe(df, '주식', sheet_name)
-                print(f"✅ 거래량급감 신호 업로드 완료")
-            else:
-                print(f"신호 없음: 거래량급감")
-        
-        # 엑셀 파일 저장
-        print("4. 엑셀 파일 저장 중...")
-        save_to_excel(results, '거래량급감')
-        
-        print("✅ 분석 완료!")
-        print(f"- 거래량 급감 전략: {len(results['volume_drop'])}개 종목")
-        
+        _run_rebound_analysis(
+            ('volume_drop',),
+            sheet_tab=sheet_tab,
+            excel_suffix='거래량급감',
+            title='거래량 급감',
+        )
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
         import traceback
         traceback.print_exc()
 
-def run_ma45_strategy():
+
+def run_ma45_strategy(sheet_tab: str | None = None):
     """45일선 전략만 실행"""
-    print(f"🚀 45일선 전략 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
-    
     try:
-        # 데이터 수집 또는 로드
-        print("1. 주가 데이터 준비 중...")
-        stock_data = load_or_collect_stock_data()
-        
-        # 리바운드 분석
-        print("2. 45일선 신호 분석 중...")
-        analyzer = ReboundAnalyzer()
-        
-        # 45일선 전략만 분석
-        count = 0
-        total = len(stock_data)
-        
-        for data in stock_data:
-            count += 1
-            if count % 50 == 0:
-                print(f"  진행 중... {count}/{total} 종목 분석")
-                
-            if is_regular_stock(data['종목명']):
-                # 과거 데이터 조회
-                historical_data = analyzer.get_historical_data(data['종목코드'])
-                if historical_data is not None and not historical_data.empty:
-                    # 45일선 전략 분석
-                    if analyzer.analyze_ma45(historical_data):
-                        analyzer.results['ma45'].append({
-                            'code': data['종목코드'],
-                            'name': data['종목명'],
-                            'strategy': '45일선',
-                            'current_price': data['현재가'],
-                            'ma45_price': historical_data.iloc[0]['MA45']
-                        })
-        
-        results = analyzer.get_results()
-        
-        # 구글 시트 업로드
-        print("3. 구글 시트 업로드 중...")
-        uploader = GoogleSheetsUploader()
-        if uploader.setup_connection():
-            # 시트 이름 설정
-            today = datetime.now().strftime('%Y%m%d')
-            sheet_name = f'45일선_{today}'
-            
-            # 결과가 있는 경우에만 업로드
-            if results['ma45'] and len(results['ma45']) > 0:
-                df = pd.DataFrame(results['ma45'])
-                uploader.upload_dataframe(df, '주식', sheet_name)
-                print(f"✅ 45일선 신호 업로드 완료")
-            else:
-                print(f"신호 없음: 45일선")
-        
-        # 엑셀 파일 저장
-        print("4. 엑셀 파일 저장 중...")
-        save_to_excel(results, '45일선')
-        
-        print("✅ 분석 완료!")
-        print(f"- 45일선 전략: {len(results['ma45'])}개 종목")
-        
+        _run_rebound_analysis(
+            ('ma45',),
+            sheet_tab=sheet_tab,
+            excel_suffix='45일선',
+            title='45일선',
+        )
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
 
-def run_ma360_strategy():
+
+def run_ma360_strategy(sheet_tab: str | None = None):
     """360일선 전략만 실행"""
-    print(f"🚀 360일선 전략 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
-    
     try:
-        # 데이터 수집 또는 로드
-        print("1. 주가 데이터 준비 중...")
-        stock_data = load_or_collect_stock_data()
-        
-        # 리바운드 분석
-        print("2. 360일선 신호 분석 중...")
-        analyzer = ReboundAnalyzer()
-        
-        # 360일선 전략만 분석
-        count = 0
-        total = len(stock_data)
-        
-        for data in stock_data:
-            count += 1
-            if count % 50 == 0:
-                print(f"  진행 중... {count}/{total} 종목 분석")
-                
-            if is_regular_stock(data['종목명']):
-                # 과거 데이터 조회
-                historical_data = analyzer.get_historical_data(data['종목코드'])
-                if historical_data is not None and not historical_data.empty and len(historical_data) >= 360:
-                    # 360일선 전략 분석
-                    if analyzer.analyze_ma360(historical_data):
-                        analyzer.results['ma360'].append({
-                            'code': data['종목코드'],
-                            'name': data['종목명'],
-                            'strategy': '360일선',
-                            'current_price': data['현재가'],
-                            'ma360_price': historical_data.iloc[0]['MA360']
-                        })
-        
-        results = analyzer.get_results()
-        
-        # 구글 시트 업로드
-        print("3. 구글 시트 업로드 중...")
-        uploader = GoogleSheetsUploader()
-        if uploader.setup_connection():
-            # 시트 이름 설정
-            today = datetime.now().strftime('%Y%m%d')
-            sheet_name = f'360일선_{today}'
-            
-            # 결과가 있는 경우에만 업로드
-            if results['ma360'] and len(results['ma360']) > 0:
-                df = pd.DataFrame(results['ma360'])
-                uploader.upload_dataframe(df, '주식', sheet_name)
-                print(f"✅ 360일선 신호 업로드 완료")
-            else:
-                print(f"신호 없음: 360일선")
-        
-        # 엑셀 파일 저장
-        print("4. 엑셀 파일 저장 중...")
-        save_to_excel(results, '360일선')
-        
-        print("✅ 분석 완료!")
-        print(f"- 360일선 전략: {len(results['ma360'])}개 종목")
-        
+        _run_rebound_analysis(
+            ('ma360',),
+            sheet_tab=sheet_tab,
+            excel_suffix='360일선',
+            title='360일선',
+        )
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
+
 
 def run_all_strategies(sheet_tab: str | None = None):
-    """모든 리바운드 전략 실행"""
-    tab = resolve_sheet_tab(sheet_tab)
-    print(f"🚀 전체 리바운드 전략 분석 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
-    print(f"   구글 시트 탭 접두: {tab}")
-    
+    """모든 리바운드 전략 실행 (거래량 급감·45일선·360일선)"""
     try:
-        # 데이터 수집 또는 로드
-        print("1. 주가 데이터 준비 중...")
-        stock_data = load_or_collect_stock_data()
-        
-        # 리바운드 분석
-        print("2. 리바운드 신호 분석 중...")
-        analyzer = ReboundAnalyzer()
-        for data in stock_data:
-            if is_regular_stock(data['종목명']):
-                analyzer.analyze_stock(data)
-        results = analyzer.get_results()
-        
-        # 구글 시트 업로드
-        print("3. 구글 시트 업로드 중...")
-        uploader = GoogleSheetsUploader()
-        uploader.upload_rebound_signals(results, date_str=tab)
-        
-        # 엑셀 파일 저장
-        print("4. 엑셀 파일 저장 중...")
-        save_to_excel(results)
-        
-        print("✅ 분석 완료!")
-        
-        # 결과 요약 출력
-        print("\n📊 분석 결과 요약:")
-        print(f"- 거래량 급감 전략: {len(results['volume_drop'])}개 종목")
-        print(f"- 45일선 전략: {len(results['ma45'])}개 종목")
-        print(f"- 360일선 전략: {len(results['ma360'])}개 종목")
-        
+        _run_rebound_analysis(
+            ('volume_drop', 'ma45', 'ma360'),
+            sheet_tab=sheet_tab,
+            excel_suffix=None,
+            title='전체 리바운드',
+        )
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
 
@@ -378,11 +242,11 @@ def main():
     if not strategy:
         run_all_strategies(sheet_tab=tab)
     elif strategy in ("1", "volume", "volume_drop"):
-        run_volume_drop_strategy()
+        run_volume_drop_strategy(sheet_tab=tab)
     elif strategy in ("2", "ma45"):
-        run_ma45_strategy()
+        run_ma45_strategy(sheet_tab=tab)
     elif strategy in ("3", "ma360"):
-        run_ma360_strategy()
+        run_ma360_strategy(sheet_tab=tab)
     else:
         print("❌ 잘못된 전략 이름입니다.")
         print("사용법: python daily_rebound_analysis.py [전략] [--sheet-tab YYYY-MM-DD]")

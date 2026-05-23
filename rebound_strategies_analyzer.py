@@ -330,27 +330,38 @@ class ReboundAnalyzer:
             print(f"360일선 분석 중 오류 발생: {str(e)}")
             return False
 
-    def analyze_stock(self, stock_data):
-        """개별 종목에 대한 리바운드 전략 분석 (거래량 급감 전략만 실행)"""
+    def analyze_stock(self, stock_data, strategies=None):
+        """개별 종목 리바운드 분석. strategies 미지정 시 3전략 모두 실행."""
         try:
             code = stock_data.get('종목코드', '')
             name = stock_data.get('종목명', '')
-            
+
             if not code:
                 return
-            
-            print(f"  📊 {name}({code}) 리바운드 분석 중...")
-            
-            # 과거 데이터 조회
+
+            run = set(strategies or ('volume_drop', 'ma45', 'ma360'))
+
             historical_data = self.get_historical_data(code, days=400)
             if historical_data is None or historical_data.empty:
                 return
-            
-            # 거래량 급감 전략만 실행
-            volume_result = self.analyze_volume_drop(stock_data, historical_data)
-            if volume_result:
-                self.results['volume_drop'].append(volume_result)
-                print(f"    ✅ 거래량 급감 신호 발견: {name}")
+
+            n = len(historical_data)
+
+            if 'volume_drop' in run and n >= 3:
+                volume_result = self.analyze_volume_drop(stock_data, historical_data)
+                if volume_result:
+                    self.results['volume_drop'].append(volume_result)
+
+            if 'ma45' in run and n >= 60:
+                ma45_result = self.analyze_ma45(stock_data, historical_data)
+                if ma45_result:
+                    self.results['ma45'].append(ma45_result)
+
+            if 'ma360' in run and n >= 380:
+                ma360_result = self.analyze_ma360(stock_data, historical_data)
+                if ma360_result:
+                    self.results['ma360'].append(ma360_result)
+
         except Exception as e:
             print(f"종목 분석 중 오류 발생 ({stock_data.get('종목명', 'Unknown')}): {str(e)}")
 

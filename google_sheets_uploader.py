@@ -110,34 +110,36 @@ class GoogleSheetsUploader:
         except Exception as e:
             print(f"데이터 업데이트 중 오류 발생: {str(e)}")
     
-    def upload_rebound_signals(self, results, date_str: str | None = None):
-        """리바운드 신호 업로드"""
+    def upload_rebound_signals(self, results, date_str: str | None = None, strategy_keys=None):
+        """리바운드 신호 업로드. strategy_keys로 업로드할 전략만 지정 가능."""
         try:
             date_str = date_str or datetime.now().strftime('%Y-%m-%d')
-            
-            # 전략별 시트 생성 및 업데이트
+
             strategies = {
                 'volume_drop': '거래량급감',
                 'ma45': '45일선',
-                'ma360': '360일선'
+                'ma360': '360일선',
             }
-            
-            for key, name in strategies.items():
+            keys = tuple(strategy_keys) if strategy_keys else tuple(strategies.keys())
+
+            for key in keys:
+                if key not in strategies:
+                    continue
+                name = strategies[key]
                 sheet_name = f"{date_str}_{name}"
                 self.create_sheet(sheet_name)
                 
-                if results[key]:
+                if results.get(key):
                     df = pd.DataFrame(results[key])
                     self.update_sheet(df, sheet_name)
                 else:
                     print(f"신호 없음: {name}")
             
-            # 통합 시트 업데이트
             all_signals = []
-            for key in strategies.keys():
-                all_signals.extend(results[key])
-            
-            if all_signals:
+            for key in keys:
+                all_signals.extend(results.get(key) or [])
+
+            if len(keys) > 1 and all_signals:
                 sheet_name = f"{date_str}_전체"
                 self.create_sheet(sheet_name)
                 df_all = pd.DataFrame(all_signals)
