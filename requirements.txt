@@ -8,4 +8,5 @@ google-auth-httplib2>=0.1.0
 google-api-python-client>=2.0.2
 python-dotenv>=0.19.0
 schedule>=1.1.0
+exchange_calendars>=4.5.0
 openpyxl>=3.1.0 

@@ -1,3 +1,7 @@
+from console_utf8 import enable as enable_utf8_console
+
+enable_utf8_console()
+
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -8,6 +12,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 import numpy as np
 import os
+
+from stock_data_utils import fill_trading_amounts_df, fill_trading_amounts_record
 
 def is_regular_stock(name):
     """
@@ -995,7 +1001,7 @@ def get_stock_data():
                     volume_change_rate = calculate_volume_change_rate(current_volume, prev_volume)
                     
                     if all([name, code, current_price]):
-                        stock_data.append({
+                        row = {
                             '종목명': name,
                             '종목코드': code,
                             '시장구분': market_name,
@@ -1006,6 +1012,8 @@ def get_stock_data():
                             '전일거래량': prev_volume,
                             '거래량증감율': volume_change_rate,
                             '거래대금': trading_value,
+                            '전일거래대금': '',
+                            '거래대금증감율': '',
                             'PER': per,
                             'PBR': pbr,
                             'ROE': roe,
@@ -1023,7 +1031,9 @@ def get_stock_data():
                             '기관비율': institutional_ratio,
                             '베타': beta,
                             '수집일자': datetime.now().strftime('%Y-%m-%d')
-                        })
+                        }
+                        fill_trading_amounts_record(row)
+                        stock_data.append(row)
                         collected += 1
                         
                         # 진행상황 출력
@@ -1056,7 +1066,7 @@ def main():
     end_time = datetime.now()
     
     if stock_data:
-        df = pd.DataFrame(stock_data)
+        df = fill_trading_amounts_df(pd.DataFrame(stock_data))
         filename = f'full_stock_data_detailed_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
         df.to_excel(filename, index=False)
         
@@ -1074,6 +1084,10 @@ def main():
         print(f"매출액 데이터 있는 종목: {df['매출액'].notna().sum()}/{len(df)}")
         print(f"배당수익률 데이터 있는 종목: {df['배당수익률'].notna().sum()}/{len(df)}")
         print(f"거래량증감율 데이터 있는 종목: {df['거래량증감율'].notna().sum()}/{len(df)}")
+        if '거래대금' in df.columns:
+            print(f"거래대금 데이터 있는 종목: {pd.to_numeric(df['거래대금'], errors='coerce').notna().sum()}/{len(df)}")
+        if '전일거래대금' in df.columns:
+            print(f"전일거래대금 데이터 있는 종목: {pd.to_numeric(df['전일거래대금'], errors='coerce').notna().sum()}/{len(df)}")
         
         # 시가총액별 분포 확인
         df['시가총액'] = pd.to_numeric(df['시가총액'], errors='coerce')

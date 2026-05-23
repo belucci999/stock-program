@@ -1,3 +1,7 @@
+from console_utf8 import enable as enable_utf8_console
+
+enable_utf8_console()
+
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -80,7 +84,10 @@ def contrarian_screening():
         print(f"✅ 총 {len(df)}개 종목 데이터 로드")
         
         # 숫자 데이터 정리
-        numeric_columns = ['PER', 'PBR', 'ROE', '시가총액', '현재가', '전일종가', '거래량', '전일거래량']
+        numeric_columns = [
+            'PER', 'PBR', 'ROE', '시가총액', '현재가', '전일종가',
+            '거래량', '전일거래량', '거래대금', '전일거래대금', '거래대금증감율',
+        ]
         for col in numeric_columns:
             if col in df.columns:
                 df[col] = df[col].apply(clean_numeric_data)

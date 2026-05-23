@@ -8,8 +8,19 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
+from credentials_path import resolve_credentials_path
+
 # Load environment variables
 load_dotenv()
+
+# 업로드 시 숫자로 유지할 컬럼 (서식 API 호출 없음, 값만 숫자 타입으로 전달)
+NUMERIC_COLUMNS = frozenset({
+    '현재가', '전일종가', '거래량', '전일거래량', '거래대금', '전일거래대금',
+    '시가총액', '매출액', '영업이익', '당기순이익', '52주최고', '52주최저', '배당금',
+    'PER', 'PBR', 'ROE', '부채비율', '유보율', '배당수익률', '영업이익률', '순이익률',
+    '거래량증감율', '거래대금증감율', '가격변화율', '거래량변화율', '외국인비율', '기관비율', '베타', '투자점수',
+})
+
 
 class GoogleSheetsUploader:
     def __init__(self):
@@ -17,22 +28,28 @@ class GoogleSheetsUploader:
         load_dotenv()
         
         self.SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        self.CREDENTIALS_FILE = 'credentials.json'
+        self.CREDENTIALS_FILE = resolve_credentials_path()
         self.SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
         
-        if not self.SPREADSHEET_ID:
-            print("⚠️ SPREADSHEET_ID가 설정되지 않았습니다.")
+        if not os.path.exists(self.CREDENTIALS_FILE):
+            print(f"[경고] {self.CREDENTIALS_FILE} 파일이 없습니다.")
             return
-        
-        # Google Sheets API 인증
+
+        if not self.SPREADSHEET_ID:
+            print("[경고] SPREADSHEET_ID가 설정되지 않았습니다. (.env 파일 확인)")
+            return
+
+        # Google Sheets API + gspread 연결
         try:
             self.credentials = service_account.Credentials.from_service_account_file(
                 self.CREDENTIALS_FILE, scopes=self.SCOPES)
             self.service = build('sheets', 'v4', credentials=self.credentials)
-            print("✅ 구글 시트 API 인증 성공")
+            self.setup_connection()
+            print("[OK] 구글 시트 API 인증 성공")
         except Exception as e:
-            print(f"❌ 구글 시트 API 인증 실패: {str(e)}")
+            print(f"[오류] 구글 시트 API 인증 실패: {str(e)}")
             self.service = None
+            self.gc = None
     
     def create_sheet(self, sheet_name):
         """새로운 시트 생성"""
@@ -140,36 +157,118 @@ class GoogleSheetsUploader:
             ]
             
             if not os.path.exists(self.CREDENTIALS_FILE):
-                print(f"❌ {self.CREDENTIALS_FILE} 파일이 없습니다.")
+                print(f"[오류] {self.CREDENTIALS_FILE} 파일이 없습니다.")
                 return False
             
             creds = Credentials.from_service_account_file(self.CREDENTIALS_FILE, scopes=scope)
             self.gc = gspread.authorize(creds)
-            print("✅ 구글 시트 연결 성공!")
+            print("[OK] 구글 시트 연결 성공")
             return True
             
         except Exception as e:
-            print(f"❌ 구글 시트 연결 실패: {str(e)}")
+            print(f"[오류] 구글 시트 연결 실패: {str(e)}")
             return False
     
-    def create_or_get_spreadsheet(self, spreadsheet_name):
-        """스프레드시트 생성 또는 가져오기"""
+    def create_or_get_spreadsheet(self, spreadsheet_name=None):
+        """스프레드시트 열기 (.env SPREADSHEET_ID 우선)"""
+        if not getattr(self, "gc", None):
+            if not self.setup_connection():
+                return None
+
         try:
-            # 기존 스프레드시트 찾기
+            if self.SPREADSHEET_ID:
+                spreadsheet = self.gc.open_by_key(self.SPREADSHEET_ID)
+                print(f"[연결] 스프레드시트: {spreadsheet.title}")
+                return spreadsheet
+
+            if not spreadsheet_name:
+                print("[오류] SPREADSHEET_ID 또는 스프레드시트 이름이 필요합니다.")
+                return None
+
             try:
                 spreadsheet = self.gc.open(spreadsheet_name)
-                print(f"📋 기존 스프레드시트 사용: {spreadsheet_name}")
+                print(f"[연결] 기존 스프레드시트: {spreadsheet_name}")
                 return spreadsheet
             except gspread.SpreadsheetNotFound:
-                # 새 스프레드시트 생성
                 spreadsheet = self.gc.create(spreadsheet_name)
-                print(f"📝 새 스프레드시트 생성: {spreadsheet_name}")
+                print(f"[생성] 새 스프레드시트: {spreadsheet_name}")
                 return spreadsheet
-                
+
         except Exception as e:
-            print(f"❌ 스프레드시트 생성/접근 실패: {str(e)}")
+            print(f"[오류] 스프레드시트 접근 실패: {str(e)}")
+            print("       시트를 서비스 계정 이메일(client_email)과 편집자로 공유했는지 확인하세요.")
             return None
-    
+
+    def get_or_create_worksheet(self, sheet_name, rows=8000, cols=40):
+        """날짜 탭을 가져오거나 생성. 이미 있으면 내용을 비워 같은 날 재실행 시 덮어씀."""
+        spreadsheet = self.create_or_get_spreadsheet()
+        if not spreadsheet:
+            return None
+
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+            worksheet.clear()
+            print(f"[덮어쓰기] 탭 '{sheet_name}' 기존 내용 삭제 후 갱신")
+            return worksheet
+        except gspread.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=rows, cols=cols)
+            print(f"[생성] 탭 '{sheet_name}' 새로 추가")
+            return worksheet
+
+    def upload_sections_to_daily_tab(self, date_tab_name, sections):
+        """
+        하루치 결과를 하나의 탭에 섹션별로 업로드.
+        sections: [(섹션제목, DataFrame 또는 None), ...]
+        """
+        try:
+            worksheet = self.get_or_create_worksheet(date_tab_name)
+            if not worksheet:
+                return False
+
+            rows = []
+            for section_title, df in sections:
+                rows.append([section_title])
+                rows.append([])
+                if df is not None and len(df) > 0:
+                    df_upload = self.prepare_dataframe_for_upload(df)
+                    rows.append(df_upload.columns.tolist())
+                    for row in df_upload.itertuples(index=False, name=None):
+                        rows.append(list(row))
+                else:
+                    rows.append(["(데이터 없음)"])
+                rows.append([])
+                rows.append([])
+
+            if rows:
+                worksheet.update(
+                    values=rows,
+                    range_name="A1",
+                    value_input_option="USER_ENTERED",
+                )
+
+            section_count = sum(1 for _, df in sections if df is not None and len(df) > 0)
+            print(f"[OK] 탭 '{date_tab_name}' 업로드 완료 (섹션 {section_count}개)")
+            return True
+
+        except Exception as e:
+            print(f"[오류] 탭 '{date_tab_name}' 업로드 실패: {str(e)}")
+            return False
+
+    def prepare_dataframe_for_upload(self, df):
+        """업로드용 DataFrame: NaN 처리, 숫자 컬럼은 숫자 값으로 전달 (서식 API 미사용)."""
+        out = df.copy()
+        out = out.replace([np.inf, -np.inf], np.nan)
+
+        for col in out.columns:
+            if col in NUMERIC_COLUMNS:
+                out[col] = pd.to_numeric(
+                    out[col].astype(str).str.replace(',', '', regex=False),
+                    errors='coerce',
+                )
+
+        out = out.where(pd.notna(out), '')
+        return out
+
     def clean_dataframe(self, df):
         """DataFrame에서 NaN 값을 처리하여 JSON 호환 가능하게 만들기"""
         # DataFrame 복사
@@ -214,30 +313,36 @@ class GoogleSheetsUploader:
                 data = [df_clean.columns.tolist()] + df_clean.values.tolist()
                 
                 # 수정된 update 방식
-                worksheet.update(values=data, range_name='A1')
+                worksheet.update(
+                    values=data,
+                    range_name='A1',
+                    value_input_option='USER_ENTERED',
+                )
                 
-                print(f"✅ '{sheet_name}' 시트에 {len(df)}개 행 업로드 완료!")
+                print(f"[OK] '{sheet_name}' 시트에 {len(df)}개 행 업로드 완료")
                 return True
             else:
-                print(f"⚠️ '{sheet_name}' 시트: 업로드할 데이터가 없습니다.")
+                print(f"[안내] '{sheet_name}' 시트: 업로드할 데이터가 없습니다.")
                 return True
                 
         except Exception as e:
-            print(f"❌ 시트 업로드 실패 ({sheet_name}): {str(e)}")
+            print(f"[오류] 시트 업로드 실패 ({sheet_name}): {str(e)}")
             return False
     
-    def get_spreadsheet_url(self, spreadsheet_name):
+    def get_spreadsheet_url(self, spreadsheet_name=None):
         """스프레드시트 URL 가져오기"""
         try:
-            spreadsheet = self.gc.open(spreadsheet_name)
-            return spreadsheet.url
-        except:
+            spreadsheet = self.create_or_get_spreadsheet(spreadsheet_name)
+            return spreadsheet.url if spreadsheet else None
+        except Exception:
             return None
 
     def format_sheet_headers(self, spreadsheet_name, sheet_name):
         """시트 헤더 포맷 설정 (선택사항)"""
         try:
-            spreadsheet = self.gc.open(spreadsheet_name)
+            spreadsheet = self.create_or_get_spreadsheet(spreadsheet_name)
+            if not spreadsheet:
+                return False
             worksheet = spreadsheet.worksheet(sheet_name)
             
             # 헤더 행 굵게 만들기
@@ -246,9 +351,9 @@ class GoogleSheetsUploader:
                 'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
             })
             
-            print(f"✅ '{sheet_name}' 시트 헤더 포맷 적용 완료!")
+            print(f"[OK] '{sheet_name}' 헤더 포맷 적용")
             return True
             
         except Exception as e:
-            print(f"⚠️ 헤더 포맷 적용 실패 ({sheet_name}): {str(e)}")
+            print(f"[경고] 헤더 포맷 적용 실패 ({sheet_name}): {str(e)}")
             return False

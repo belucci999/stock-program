@@ -35,6 +35,7 @@ env/
 # 생성된 데이터 파일
 *.xlsx
 *.log
+logs/
 ~*
 
 # OS 관련
