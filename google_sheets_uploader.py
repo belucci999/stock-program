@@ -19,6 +19,7 @@ NUMERIC_COLUMNS = frozenset({
     '시가총액', '매출액', '영업이익', '당기순이익', '52주최고', '52주최저', '배당금',
     'PER', 'PBR', 'ROE', '부채비율', '유보율', '배당수익률', '영업이익률', '순이익률',
     '거래량증감율', '거래대금증감율', '가격변화율', '거래량변화율', '외국인비율', '기관비율', '베타', '투자점수',
+    'MA20', '전일MA20', '종가대비MA20(%)', '돌파일거래대금', '돌파일거래대금(억)', '시가', '종가',
 })
 
 
@@ -215,6 +216,19 @@ class GoogleSheetsUploader:
             print(f"[생성] 탭 '{sheet_name}' 새로 추가")
             return worksheet
 
+    def _section_rows(self, section_title, df):
+        """섹션 제목 + DataFrame을 시트 행 목록으로 변환."""
+        rows = [[section_title], []]
+        if df is not None and len(df) > 0:
+            df_upload = self.prepare_dataframe_for_upload(df)
+            rows.append(df_upload.columns.tolist())
+            for row in df_upload.itertuples(index=False, name=None):
+                rows.append(list(row))
+        else:
+            rows.append(["(데이터 없음)"])
+        rows.extend([[], []])
+        return rows
+
     def upload_sections_to_daily_tab(self, date_tab_name, sections):
         """
         하루치 결과를 하나의 탭에 섹션별로 업로드.
@@ -227,17 +241,7 @@ class GoogleSheetsUploader:
 
             rows = []
             for section_title, df in sections:
-                rows.append([section_title])
-                rows.append([])
-                if df is not None and len(df) > 0:
-                    df_upload = self.prepare_dataframe_for_upload(df)
-                    rows.append(df_upload.columns.tolist())
-                    for row in df_upload.itertuples(index=False, name=None):
-                        rows.append(list(row))
-                else:
-                    rows.append(["(데이터 없음)"])
-                rows.append([])
-                rows.append([])
+                rows.extend(self._section_rows(section_title, df))
 
             if rows:
                 worksheet.update(
@@ -252,6 +256,62 @@ class GoogleSheetsUploader:
 
         except Exception as e:
             print(f"[오류] 탭 '{date_tab_name}' 업로드 실패: {str(e)}")
+            return False
+
+    def append_sections_to_tab(self, tab_name, sections, replace_section_titles=None):
+        """
+        기존 탭 내용을 유지한 채 섹션을 하단에 추가.
+        replace_section_titles에 있는 제목이 이미 있으면 해당 섹션만 교체.
+        """
+        try:
+            spreadsheet = self.create_or_get_spreadsheet()
+            if not spreadsheet:
+                return False
+
+            try:
+                worksheet = spreadsheet.worksheet(tab_name)
+            except gspread.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title=tab_name, rows=8000, cols=40)
+                print(f"[생성] 탭 '{tab_name}' 새로 추가")
+
+            existing = worksheet.get_all_values()
+            replace_titles = set(replace_section_titles or [])
+
+            if replace_titles and existing:
+                kept = []
+                skip = False
+                for row in existing:
+                    title = row[0] if row else ''
+                    if title in replace_titles:
+                        skip = True
+                        continue
+                    if skip:
+                        if title.startswith('---') and title.endswith('---') and title not in replace_titles:
+                            skip = False
+                            kept.append(row)
+                        continue
+                    kept.append(row)
+                while kept and not any(kept[-1]):
+                    kept.pop()
+                existing = kept
+
+            new_rows = []
+            for section_title, df in sections:
+                new_rows.extend(self._section_rows(section_title, df))
+
+            combined = existing + ([[]] if existing else []) + new_rows
+            worksheet.update(
+                values=combined,
+                range_name="A1",
+                value_input_option="USER_ENTERED",
+            )
+
+            section_count = sum(1 for _, df in sections if df is not None and len(df) > 0)
+            print(f"[OK] 탭 '{tab_name}' 섹션 추가 완료 ({section_count}개)")
+            return True
+
+        except Exception as e:
+            print(f"[오류] 탭 '{tab_name}' 섹션 추가 실패: {str(e)}")
             return False
 
     def prepare_dataframe_for_upload(self, df):

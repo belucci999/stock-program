@@ -12,6 +12,7 @@ enable_utf8_console()
 import argparse
 import glob
 import re
+import sys
 import time
 from datetime import datetime
 
@@ -21,6 +22,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from stock_data_utils import fill_trading_amounts_df
+from google_sheets_uploader import GoogleSheetsUploader
 
 HEADERS = {
     'User-Agent': (
@@ -225,14 +227,64 @@ def screen_ma20_breakout(limit: int = 0, sleep_sec: float = 0.12):
     return result_df
 
 
+MA20_SECTION_TITLE = '--- 20일선 상향 돌파 ---'
+
+
+def upload_ma20_to_google_sheets(result_df: pd.DataFrame, tab_name: str | None = None) -> bool:
+    """동일 스프레드시트의 날짜 탭에 20일선 돌파 섹션을 추가."""
+    print('\n[구글 시트] 업로드 시작...')
+    uploader = GoogleSheetsUploader()
+    if not getattr(uploader, 'gc', None):
+        print('[오류] 구글 시트 연결 실패 (.env SPREADSHEET_ID, credentials 확인)')
+        return False
+
+    date_tab = tab_name or datetime.now().strftime('%Y-%m-%d')
+    run_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    summary = pd.DataFrame({
+        '항목': ['분석 일시', '조건 충족 종목 수', '조건'],
+        '값': [
+            run_time,
+            f'{len(result_df)}개',
+            'ROE>5, 20일선 상향돌파, 양봉, 거래대금 50억+',
+        ],
+    })
+
+    sections = [
+        (MA20_SECTION_TITLE, summary),
+        ('--- 20일선 돌파 종목 ---', result_df if len(result_df) > 0 else None),
+    ]
+
+    ok = uploader.append_sections_to_tab(
+        date_tab,
+        sections,
+        replace_section_titles={MA20_SECTION_TITLE, '--- 20일선 돌파 종목 ---'},
+    )
+    if ok:
+        url = uploader.get_spreadsheet_url()
+        print(f'[완료] 구글 시트 업로드 (탭: {date_tab})')
+        if url:
+            print(f'URL: {url}')
+    return ok
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='ROE>5, 20일선 상향 돌파, 양봉, 거래대금 50억+ 스크리닝'
     )
     parser.add_argument('--limit', type=int, default=0, help='테스트용 검사 종목 수 제한')
     parser.add_argument('--sleep', type=float, default=0.12, help='종목당 요청 간격(초)')
+    parser.add_argument('--no-upload', dest='upload', action='store_false', help='구글 시트 업로드 생략')
+    parser.add_argument('--sheet-tab', default='', help='업로드할 탭 이름 (기본: 오늘 YYYY-MM-DD)')
+    parser.set_defaults(upload=True)
     args = parser.parse_args()
-    screen_ma20_breakout(limit=args.limit, sleep_sec=args.sleep)
+
+    result_df = screen_ma20_breakout(limit=args.limit, sleep_sec=args.sleep)
+    if result_df is None:
+        sys.exit(1)
+
+    if args.upload:
+        tab = args.sheet_tab or None
+        upload_ma20_to_google_sheets(result_df, tab_name=tab)
 
 
 if __name__ == '__main__':

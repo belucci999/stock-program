@@ -168,9 +168,9 @@ def upload_to_google_sheets(stock_data_file, analysis_file):
 
 
 def main():
-    """매일 주식 분석 + 구글 시트 업로드 자동화"""
+    """매일 주식 분석 + 구글 시트 업로드 자동화 (전체 전략)"""
     print("=" * 60)
-    print("매일 주식 분석 + 구글 시트 자동화")
+    print("매일 주식 분석 + 구글 시트 자동화 (전체 전략)")
     print(f"실행: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"경로: {os.getcwd()}")
     print("=" * 60)
@@ -201,13 +201,28 @@ def main():
         else:
             print("[오류] 업로드할 파일 없음")
 
+    ma20_success = run_python_script(
+        "ma20_breakout_screener.py",
+        "20일선 상향 돌파 스크리닝",
+    )
+
+    rebound_success = run_python_script(
+        "daily_rebound_analysis.py",
+        "리바운드 전략 (거래량급감·45일선·360일선)",
+    )
+
     print(f"\n{'='*60}")
     print("실행 결과")
-    print(f"  데이터 수집: {'성공' if data_success else '실패'}")
-    print(f"  역발상 분석: {'성공' if analysis_success else '실패'}")
-    print(f"  구글 시트:   {'성공' if upload_success else '실패'}")
+    print(f"  데이터 수집:   {'성공' if data_success else '실패'}")
+    print(f"  역발상 분석:   {'성공' if analysis_success else '실패'}")
+    print(f"  구글 시트:     {'성공' if upload_success else '실패'}")
+    print(f"  20일선 돌파:   {'성공' if ma20_success else '실패'}")
+    print(f"  리바운드 전략: {'성공' if rebound_success else '실패'}")
     print(f"완료: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
+
+    if not all([data_success, ma20_success, rebound_success]):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

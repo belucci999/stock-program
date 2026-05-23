@@ -58,10 +58,20 @@ python daily_auto_stock_analysis.py
 
 ## 🚀 사용 방법
 
-### 자동 분석 실행 (1회)
+### 자동 분석 실행 (1회, 전체 전략)
 ```bash
 python daily_auto_stock_analysis.py
 ```
+
+장 종료 후(17:00) 자동 실행 시 `run_scheduled_analysis.py`가 아래를 순서대로 실행합니다.
+
+| 순서 | 스크립트 | 내용 |
+|------|----------|------|
+| 1 | `quick_stock_check.py` | 전체 종목 데이터 수집 |
+| 2 | `contrarian_stock_screener.py` | 역발상 투자 후보 |
+| 3 | 구글 시트 업로드 | 당일 탭(`YYYY-MM-DD`)에 요약·TOP500·역발상 |
+| 4 | `ma20_breakout_screener.py` | 20일선 상향 돌파 + 시트 섹션 추가 |
+| 5 | `daily_rebound_analysis.py` | 거래량급감·45일선·360일선 리바운드 |
 
 ### 매일 17:00 자동 실행 (거래일만)
 
@@ -81,7 +91,8 @@ python daily_scheduler.py
 
 `.env`에 `SPREADSHEET_ID`를 설정하고, 시트를 `google-sa.json`의 `client_email`에 편집 권한으로 공유합니다.
 
-- 매일 실행 결과는 **`YYYY-MM-DD` 이름의 탭** 하나에 저장됩니다.
+- 매일 실행 결과는 **`YYYY-MM-DD` 이름의 탭** 하나에 저장됩니다 (역발상·TOP500·20일선 돌파 등).
+- 리바운드 전략은 같은 스프레드시트에 **`YYYY-MM-DD_거래량급감`** 등 별도 탭으로 추가됩니다.
 - 같은 날 두 번 실행하면 **해당 날짜 탭을 비운 뒤 덮어씁니다** (나중 실행이 최종본).
 - 탭 안에는 분석 요약, TOP500, 코스피/코스닥, 역발상 결과 등이 섹션별로 들어갑니다.
 
@@ -187,8 +198,7 @@ python ma20_breakout_screener.py --limit 30
 
 - `ma20_breakout_YYYYMMDD_HHMM.xlsx`
 - 돌파 종목의 기존 재무·시세 컬럼 + `MA20`, `돌파일거래대금`, `돌파일거래대금(억)`, `양봉` 등
-
-구글 시트 자동 업로드는 포함하지 않습니다. 필요 시 엑셀을 수동으로 올리거나 `daily_auto`에 연동할 수 있습니다.
+- 구글 시트 당일 탭에 `--- 20일선 상향 돌파 ---` 섹션으로 자동 업로드 (`daily_auto` 또는 단독 실행 시)
 
 ## 📁 파일 구조 
 ```

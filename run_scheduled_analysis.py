@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""거래일에만 일일 주식 분석을 실행합니다. (작업 스케줄러 / 스케줄러 공용 진입점)"""
+"""거래일에만 전체 주식 전략을 실행합니다. (작업 스케줄러 / 스케줄러 공용 진입점)"""
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +21,7 @@ def main() -> int:
         print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {today} - 휴장일, 분석을 건너뜁니다.")
         return 0
 
-    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 거래일 - 일일 분석을 시작합니다.")
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 거래일 - 전체 전략 분석을 시작합니다.")
     import daily_auto_stock_analysis
 
     daily_auto_stock_analysis.main()

@@ -1,4 +1,4 @@
-# Windows 작업 스케줄러: 거래일 평일 17:00 일일 주식 분석
+# Windows 작업 스케줄러: 거래일 평일 17:00 전체 주식 전략 자동 실행
 # 관리자 권한 없이 현재 사용자 계정으로 등록합니다.
 
 $ErrorActionPreference = "Stop"
@@ -40,7 +40,7 @@ Register-ScheduledTask `
 
 Write-Host "등록 완료: $TaskName"
 Write-Host "  Python: $python"
-Write-Host "  실행: 월~금 17:00 -> run_daily_task.cmd (로그: logs\)"
+Write-Host "  실행: 월~금 17:00 -> run_daily_task.cmd (전체 전략, 로그: logs\)"
 Write-Host ""
 Write-Host "확인: taskschd.msc 또는 Get-ScheduledTask -TaskName $TaskName"
 Write-Host "삭제: Unregister-ScheduledTask -TaskName $TaskName -Confirm:`$false"
